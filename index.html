@@ -68,6 +68,9 @@ const CONFIG = {
   PLAYER_CROUCH_TIME: 0.25,          // Seconds to hold crouch before super jump is ready
   PLAYER_CROUCH_HEIGHT: 34,          // Crouched height (shorter)
   PLAYER_STOMP_BOUNCE: -350,
+  PLAYER_COYOTE_TIME: 0.1,           // Grace period to jump after walking off a ledge
+  PLAYER_JUMP_BUFFER_TIME: 0.12,     // Early jump presses are held until landing
+  PLAYER_JUMP_CUT_MULTIPLIER: 0.45,  // Releasing jump early cuts upward velocity
   PLAYER_MAX_LIVES: 3,
   PLAYER_INVINCIBILITY_TIME: 2.0,
   PLAYER_POWERED_WIDTH: 42,
@@ -227,6 +230,7 @@ class InputHandler {
   get right() { return this.isHeld('ArrowRight') || this.isHeld('KeyD') || this.touchState.right; }
   get down() { return this.isHeld('ArrowDown') || this.isHeld('KeyS') || this.touchState.down; }
   get jump() { return this.wasPressed('Space') || this.wasPressed('ArrowUp') || this.wasPressed('KeyW'); }
+  get jumpHeld() { return this.isHeld('Space') || this.isHeld('ArrowUp') || this.isHeld('KeyW'); }
   get enter() { return this.wasPressed('Enter') || this.wasPressed('Space'); }
 }
   </script>
@@ -816,6 +820,16 @@ class ParticleSystem {
       colors: [color, '#FFF', '#FFE4B5'],
       life: 0.8,
       size: 6
+    });
+  }
+
+  dust(x, y, count) {
+    this.emit(x, y, count || 6, {
+      speed: 70,
+      upwardBias: 40,
+      colors: ['#9a9ab8', '#7a7a98', '#b8b8d0'],
+      life: 0.35,
+      size: 4
     });
   }
 
@@ -3062,6 +3076,90 @@ class ShortSeller {
 }
   </script>
   <script>
+class Checkpoint {
+  constructor(x, groundY) {
+    this.width = 40;
+    this.height = 90;
+    this.x = x - this.width / 2;
+    this.y = groundY - this.height;
+    this.activated = false;
+    this.animTime = Math.random() * Math.PI * 2;
+    this.raiseAnim = 0; // 0 = flag lowered, 1 = flag raised
+  }
+
+  activate() {
+    this.activated = true;
+  }
+
+  update(dt) {
+    this.animTime += dt;
+    if (this.activated && this.raiseAnim < 1) {
+      this.raiseAnim = Math.min(1, this.raiseAnim + dt * 2.5);
+    }
+  }
+
+  render(ctx, camera) {
+    const sx = this.x - camera.x;
+    const sy = this.y - camera.y;
+    if (sx + this.width < -20 || sx > CONFIG.VIRTUAL_WIDTH + 20) return;
+
+    const poleX = sx + this.width / 2;
+    const poleTop = sy + 4;
+    const poleBottom = sy + this.height;
+
+    // Glow when active
+    if (this.activated) {
+      ctx.globalAlpha = 0.15 + Math.sin(this.animTime * 4) * 0.05;
+      ctx.fillStyle = '#00FF88';
+      ctx.beginPath();
+      ctx.arc(poleX, poleTop + 14, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Base
+    ctx.fillStyle = '#5a5a7a';
+    ctx.fillRect(poleX - 10, poleBottom - 6, 20, 6);
+    ctx.fillStyle = '#6a6a8a';
+    ctx.fillRect(poleX - 7, poleBottom - 10, 14, 4);
+
+    // Pole
+    ctx.fillStyle = this.activated ? '#d0d0e8' : '#8a8a9a';
+    ctx.fillRect(poleX - 2, poleTop, 4, this.height - 10);
+
+    // Pole top orb
+    ctx.fillStyle = this.activated ? '#FFD700' : '#6a6a7a';
+    ctx.beginPath();
+    ctx.arc(poleX, poleTop, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Flag: slides up the pole as it activates
+    const flagW = 26;
+    const flagH = 18;
+    const flagY = poleTop + 4 + (1 - this.raiseAnim) * (this.height - 40);
+    const wave = Math.sin(this.animTime * 5) * 2;
+
+    ctx.fillStyle = this.activated ? '#00CC66' : '#555570';
+    ctx.beginPath();
+    ctx.moveTo(poleX + 2, flagY);
+    ctx.lineTo(poleX + 2 + flagW, flagY + 3 + wave);
+    ctx.lineTo(poleX + 2 + flagW, flagY + flagH - 3 + wave);
+    ctx.lineTo(poleX + 2, flagY + flagH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Up-trend chart line on the flag
+    ctx.strokeStyle = this.activated ? '#FFFFFF' : '#8a8aa0';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(poleX + 6, flagY + flagH - 6);
+    ctx.lineTo(poleX + 12, flagY + flagH - 9 + wave * 0.5);
+    ctx.lineTo(poleX + 17, flagY + flagH - 7 + wave * 0.5);
+    ctx.lineTo(poleX + 23, flagY + 5 + wave);
+    ctx.stroke();
+  }
+}
+
 class Player {
   constructor(x, y, characterType) {
     this.x = x;
@@ -3104,6 +3202,16 @@ class Player {
     this.jumpedThisFrame = false;
     this.superJumpedThisFrame = false;
 
+    // Jump forgiveness (coyote time + input buffering) and variable jump height
+    this.coyoteTimer = 0;
+    this.jumpBufferTimer = 0;
+    this.jumpCutAvailable = false;
+
+    // Landing feedback (read by main.js for dust effects)
+    this.landedThisFrame = false;
+    this.landingImpact = 0;
+    this.landSquashTimer = 0;
+
     // Moving platform velocity transfer (set by main.js each frame)
     this._platformVx = 0;
     this._platformVy = 0;
@@ -3128,7 +3236,21 @@ class Player {
     // === JUMP (check BEFORE crouch so releasing down + jumping on same frame still works) ===
     this.jumpedThisFrame = false;
     this.superJumpedThisFrame = false;
-    if (input.jump && this.onGround) {
+
+    // Coyote time: brief grace period to jump after leaving a ledge
+    if (this.onGround) {
+      this.coyoteTimer = CONFIG.PLAYER_COYOTE_TIME;
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
+    }
+    // Jump buffering: remember a jump pressed slightly before landing
+    if (input.jump) {
+      this.jumpBufferTimer = CONFIG.PLAYER_JUMP_BUFFER_TIME;
+    } else {
+      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
+    }
+
+    if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
       if (this.superJumpReady) {
         // SUPER JUMP from crouch!
         this.vy = CONFIG.PLAYER_SUPER_JUMP_VELOCITY;
@@ -3155,6 +3277,11 @@ class Player {
       this.crouchTimer = 0;
       this.superJumpReady = false;
       this.onGround = false;
+      this.coyoteTimer = 0;
+      this.jumpBufferTimer = 0;
+      // Variable jump height only applies while the jump key is actually held
+      // (touch jumps fire on release, so they always get full height)
+      this.jumpCutAvailable = !!input.jumpHeld;
     }
     // Clear platform velocity each frame (re-set by main.js if still on platform)
     this._platformVx = 0;
@@ -3211,8 +3338,28 @@ class Player {
     this.vx = Math.clamp(this.vx, -maxSpeed, maxSpeed);
 
     // === PHYSICS ===
+    // Variable jump height: releasing jump early cuts the ascent
+    if (this.jumpCutAvailable) {
+      if (this.vy >= 0) {
+        this.jumpCutAvailable = false;
+      } else if (!input.jumpHeld) {
+        this.vy *= CONFIG.PLAYER_JUMP_CUT_MULTIPLIER;
+        this.jumpCutAvailable = false;
+      }
+    }
+
+    const wasOnGround = this.onGround;
+    const fallSpeed = this.vy;
     applyGravity(this, dt);
     moveAndCollide(this, solids, dt);
+
+    // Landing detection (for dust particles and squash animation)
+    this.landedThisFrame = !wasOnGround && this.onGround;
+    if (this.landedThisFrame) {
+      this.landingImpact = fallSpeed;
+      if (fallSpeed > 450) this.landSquashTimer = 0.12;
+    }
+    if (this.landSquashTimer > 0) this.landSquashTimer -= dt;
 
     // Clamp to left edge of level
     if (this.x < 0) {
@@ -3311,6 +3458,10 @@ class Player {
     this.crouching = false;
     this.crouchTimer = 0;
     this.superJumpReady = false;
+    this.coyoteTimer = 0;
+    this.jumpBufferTimer = 0;
+    this.jumpCutAvailable = false;
+    this.landSquashTimer = 0;
     this.width = CONFIG.PLAYER_WIDTH;
     this.height = CONFIG.PLAYER_HEIGHT;
     this.hasHeadband = false;
@@ -3433,6 +3584,27 @@ class Player {
       ctx.textAlign = 'center';
       const bounce = Math.sin(this.animTime * 8) * 3;
       ctx.fillText('\u25B2', screenX + this.width / 2, screenY - 8 + bounce);
+    }
+
+    // Squash & stretch: stretch along velocity in the air, squash on hard landings
+    if (!this.deathAnimating && !this.crouching) {
+      let squashX = 1, squashY = 1;
+      if (this.landSquashTimer > 0 && this.onGround) {
+        const t = this.landSquashTimer / 0.12;
+        squashX = 1 + 0.16 * t;
+        squashY = 1 - 0.2 * t;
+      } else if (!this.onGround) {
+        const stretch = Math.min(Math.abs(this.vy) / 900, 1) * 0.1;
+        squashY = 1 + stretch;
+        squashX = 1 - stretch * 0.6;
+      }
+      if (squashX !== 1 || squashY !== 1) {
+        const pivotX = screenX + this.width / 2;
+        const pivotY = screenY + this.height;
+        ctx.translate(pivotX, pivotY);
+        ctx.scale(squashX, squashY);
+        ctx.translate(-pivotX, -pivotY);
+      }
     }
 
     if (!this.facingRight) {
@@ -3767,6 +3939,9 @@ const LEVEL_1 = {
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 9300, y: 380 },
 
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 3200 }, { x: 6800 }],
+
   // Dow 30 stock ticker — fallback data (overridden by live API fetch if available)
   tickerStocks: [
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
@@ -4081,6 +4256,9 @@ const LEVEL_2 = {
   width: 12000,
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 11700, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 4000 }, { x: 8600 }],
 
   tickerStocks: [
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
@@ -4488,6 +4666,9 @@ const LEVEL_3 = {
   width: 14400,
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 14100, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 3600 }, { x: 7900 }, { x: 11400 }],
 
   tickerStocks: [
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
@@ -4974,6 +5155,7 @@ function loadLevel(levelData) {
     collectibles: [],
     shortSqueezePads: [],
     movingPlatforms: [],
+    checkpoints: (levelData.checkpoints || []).map(c => new Checkpoint(c.x, 432)),
     marketCrashZones: levelData.marketCrashZones ? levelData.marketCrashZones.map(z => ({ ...z, triggered: false })) : [],
     redCandleZones: levelData.redCandleZones || [],
     redCandleTimer: 0,
@@ -6610,6 +6792,13 @@ class AudioManager {
     });
   }
 
+  playCheckpoint() {
+    const notes = [523, 659, 784];
+    notes.forEach((freq, i) => {
+      this._playTone(freq, 0.12, 'triangle', 0.12, i * 0.08);
+    });
+  }
+
   playExtraLife() {
     const notes = [523, 659, 784, 1047, 784, 1047];
     notes.forEach((freq, i) => {
@@ -7218,8 +7407,10 @@ let hud = null;
 let background = new BackgroundRenderer();
 
 let levelTime = 0;
+let totalRunTime = 0; // accumulates across levels for leaderboard submission
 let gameTime = 0;
 let debugMode = false;
+let runDustTimer = 0;
 
 // Death/respawn state
 let deathPauseTimer = 0;
@@ -7274,6 +7465,7 @@ function startGame(characterType, levelIndex) {
   background = new BackgroundRenderer(levelData.theme || 'nightCity');
   hud = new HUD(level.tickerStocks);
   levelTime = 0;
+  totalRunTime = 0;
   deathPauseTimer = 0;
   marginCallShown = false;
   leaderboardPending = false;
@@ -7373,7 +7565,7 @@ function updatePlaying(dt) {
         gameOverScreen.finalScore = player.score;
         gameOverScreen.bullsCollected = player.totalBullsCollected;
         currentState = GameState.GAME_OVER;
-        triggerLeaderboard(player.score, player.totalBullsCollected, levelTime, player.characterType);
+        triggerLeaderboard(player.score, player.totalBullsCollected, totalRunTime, player.characterType);
       } else {
         player.respawn();
         camera.x = Math.max(0, player.x - CONFIG.VIRTUAL_WIDTH / 2);
@@ -7386,6 +7578,7 @@ function updatePlaying(dt) {
   }
 
   levelTime += dt;
+  totalRunTime += dt;
 
   // Update flash crash timer (death effect)
   if (flashCrashTimer > 0) {
@@ -7415,6 +7608,18 @@ function updatePlaying(dt) {
   // Update player
   player.update(dt, input, level.solids);
 
+  // Landing and running dust
+  if (player.landedThisFrame && player.landingImpact > 350) {
+    particles.dust(player.x + player.width / 2, player.y + player.height,
+      Math.min(12, Math.round(player.landingImpact / 90)));
+  }
+  runDustTimer += dt;
+  if (player.onGround && Math.abs(player.vx) > 200 && runDustTimer > 0.18) {
+    runDustTimer = 0;
+    particles.dust(player.x + (player.facingRight ? 6 : player.width - 6),
+      player.y + player.height - 2, 2);
+  }
+
   // Grizzly stomp combo: reset if player touches ground
   if (grizzlyComboTarget && player.onGround) {
     if (grizzlyComboTarget.alive) {
@@ -7437,9 +7642,19 @@ function updatePlaying(dt) {
     block.update(dt);
   }
 
-  // Update enemies
+  // Update enemies — only once they come within ~1.5 screens of the camera,
+  // so distant enemies hold their patrol positions until the player approaches
+  const enemyWakeLeft = camera.x - CONFIG.VIRTUAL_WIDTH * 0.5;
+  const enemyWakeRight = camera.x + CONFIG.VIRTUAL_WIDTH * 1.5;
   for (let i = level.enemies.length - 1; i >= 0; i--) {
     const enemy = level.enemies[i];
+    if (!enemy.awake) {
+      if (enemy.x + enemy.width > enemyWakeLeft && enemy.x < enemyWakeRight) {
+        enemy.awake = true;
+      } else {
+        continue;
+      }
+    }
     const keepAlive = enemy instanceof GrizzlyBear
       ? enemy.update(dt, level.solids, player.x)
       : enemy.update(dt, level.solids);
@@ -7576,6 +7791,19 @@ function updatePlaying(dt) {
       audio.playSuperJump();
       floatingText.spawn(pad.x + pad.width / 2, pad.y - 20, 'SHORT SQUEEZE!', '#00FF88', 20, 1.5);
       particles.powerUp(pad.x + pad.width / 2, pad.y, '#00FF88');
+    }
+  }
+
+  // Checkpoints — touching one moves the respawn point
+  for (const cp of level.checkpoints) {
+    cp.update(dt);
+    if (!cp.activated && !player.deathAnimating && aabbOverlap(player, cp)) {
+      cp.activate();
+      player.spawnX = cp.x + cp.width / 2 - CONFIG.PLAYER_WIDTH / 2;
+      player.spawnY = cp.y + cp.height - CONFIG.PLAYER_HEIGHT - 2;
+      audio.playCheckpoint();
+      floatingText.spawn(cp.x + cp.width / 2, cp.y - 16, 'CHECKPOINT!', '#00FF88', 22, 2.0);
+      particles.powerUp(cp.x + cp.width / 2, cp.y + cp.height / 2, '#00FF88');
     }
   }
 
@@ -7982,7 +8210,7 @@ function updateLevelComplete(dt) {
     } else {
       // All levels complete! Submit final score to leaderboard before returning to title
       if (!leaderboard.submittedThisSession) {
-        triggerLeaderboard(player.score, player.totalBullsCollected, levelTime, player.characterType);
+        triggerLeaderboard(player.score, player.totalBullsCollected, totalRunTime, player.characterType);
         // Stay on level complete screen until leaderboard resolves
         if (leaderboardPending) return;
       }
@@ -8039,6 +8267,33 @@ function render() {
   touchControls.render(ctx, canvas.width, canvas.height, currentState);
 }
 
+// Soft ground shadow under an entity (only drawn while it stands on something)
+function renderEntityShadow(ctx, camera, e) {
+  if (!e.onGround || e.alive === false) return;
+  const sx = e.x - camera.x + e.width / 2;
+  const sy = e.y + e.height - camera.y + 2;
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, e.width * 0.45, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// Subtle vignette for depth (cached gradient)
+let vignetteGradient = null;
+function renderVignette(ctx) {
+  const w = CONFIG.VIRTUAL_WIDTH;
+  const h = CONFIG.VIRTUAL_HEIGHT;
+  if (!vignetteGradient) {
+    vignetteGradient = ctx.createRadialGradient(w / 2, h / 2, h * 0.5, w / 2, h / 2, w * 0.72);
+    vignetteGradient.addColorStop(0, 'rgba(0,0,0,0)');
+    vignetteGradient.addColorStop(1, 'rgba(0,0,0,0.32)');
+  }
+  ctx.fillStyle = vignetteGradient;
+  ctx.fillRect(0, 0, w, h);
+}
+
 function renderPlaying() {
   if (marketCrashActive) {
     ctx.save();
@@ -8064,8 +8319,15 @@ function renderPlaying() {
   // Moving platforms
   if (level.movingPlatforms) {
     for (const mp of level.movingPlatforms) {
-      mp.render(ctx, camera);
+      if (mp.x + mp.width > viewLeft && mp.x < viewRight) {
+        mp.render(ctx, camera);
+      }
     }
+  }
+
+  // Checkpoints
+  for (const cp of level.checkpoints) {
+    cp.render(ctx, camera);
   }
 
   // Golden Briefcase (goal)
@@ -8073,25 +8335,36 @@ function renderPlaying() {
 
   // Short Squeeze pads
   for (const pad of level.shortSqueezePads) {
-    pad.render(ctx, camera);
+    if (pad.x + pad.width > viewLeft && pad.x < viewRight) {
+      pad.render(ctx, camera);
+    }
   }
 
   // Collectibles
   for (const c of level.collectibles) {
-    c.render(ctx, camera);
+    if (c.x + c.width > viewLeft && c.x < viewRight) {
+      c.render(ctx, camera);
+    }
   }
 
   // Enemies
   for (const e of level.enemies) {
-    e.render(ctx, camera);
+    if (e.x + e.width > viewLeft && e.x < viewRight) {
+      renderEntityShadow(ctx, camera, e);
+      e.render(ctx, camera);
+    }
   }
 
   // Boss
   if (level.boss) {
+    renderEntityShadow(ctx, camera, level.boss);
     level.boss.render(ctx, camera);
   }
 
   // Player
+  if (!player.deathAnimating) {
+    renderEntityShadow(ctx, camera, player);
+  }
   player.render(ctx, camera);
 
   // Particles and floating text
@@ -8120,6 +8393,8 @@ function renderPlaying() {
     ctx.fillRect(0, 0, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
     ctx.globalAlpha = 1;
   }
+
+  renderVignette(ctx);
 
   // HUD (screen space)
   hud.render(ctx, player, CONFIG.VIRTUAL_WIDTH);
@@ -8345,11 +8620,11 @@ requestAnimationFrame(gameLoop);
           extras.nearPit = !player.onGround && player.vy > 0;
         }
 
-        // Get current actions from input
-        const actionLeft  = !!(input.keys && (input.keys['ArrowLeft'] || input.keys['a']));
-        const actionRight = !!(input.keys && (input.keys['ArrowRight'] || input.keys['d']));
-        const actionJump  = !!(input.keys && (input.keys['Space'] || input.keys['ArrowUp'] || input.keys['w']));
-        const actionDown  = !!(input.keys && (input.keys['ArrowDown'] || input.keys['s']));
+        // Get current actions from input (getters cover arrows, WASD, and touch)
+        const actionLeft  = input.left;
+        const actionRight = input.right;
+        const actionJump  = input.jumpHeld;
+        const actionDown  = input.down;
 
         ReplayLib.recordFrame(px, py, idx, extras, actionLeft, actionRight, actionJump, actionDown);
       }
