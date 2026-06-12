@@ -424,8 +424,9 @@ class TouchControls {
   render(ctx, screenW, screenH, gameState) {
     if (!this.active) return;
 
-    // Always show hints on menus, fade during gameplay
-    const alpha = gameState === GameState.PLAYING ? this.hintAlpha : 0.7;
+    // Hints only apply to gameplay — menu screens draw their own prompts
+    if (gameState !== GameState.PLAYING) return;
+    const alpha = this.hintAlpha;
     if (alpha <= 0.01) return; // fully faded, skip rendering
 
     ctx.save();
@@ -456,9 +457,10 @@ class TouchControls {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // Left side hints
+    // Left side hints (kept above the bottom edge so curved phone corners
+    // and the home indicator don't clip the labels)
     const leftCenterX = screenW * 0.25;
-    const hintY = screenH * 0.85;
+    const hintY = screenH * 0.76;
 
     // Left arrow
     ctx.fillStyle = 'rgba(255, 255, 255, ' + (alpha * 0.4) + ')';
@@ -5701,6 +5703,30 @@ class TitleScreen {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
+    // Twinkling stars (deterministic placement)
+    ctx.fillStyle = '#FFFFFF';
+    for (let i = 0; i < 50; i++) {
+      const sx = (i * 193.7) % w;
+      const sy = (i * 113.3) % (h * 0.45);
+      ctx.globalAlpha = Math.max(0.05, 0.35 + Math.sin(this.animTime * 1.5 + i * 1.7) * 0.3);
+      ctx.fillRect(sx, sy, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Rising market chart line behind the skyline
+    const chartPts = [
+      [0, 0.88], [0.1, 0.8], [0.18, 0.85], [0.3, 0.72], [0.38, 0.78],
+      [0.5, 0.62], [0.6, 0.68], [0.72, 0.52], [0.8, 0.58], [1.0, 0.36]
+    ];
+    ctx.strokeStyle = 'rgba(0, 255, 136, 0.16)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i < chartPts.length; i++) {
+      if (i === 0) ctx.moveTo(chartPts[i][0] * w, chartPts[i][1] * h);
+      else ctx.lineTo(chartPts[i][0] * w, chartPts[i][1] * h);
+    }
+    ctx.stroke();
+
     // City silhouette at bottom
     ctx.fillStyle = '#0a0a1a';
     const buildings = [
@@ -5726,110 +5752,164 @@ class TitleScreen {
     }
 
     // Title: "BULL RUN"
-    const titleBounce = Math.sin(this.animTime * 2) * 6;
-    const titleY = h * 0.2 + titleBounce;
+    const titleBounce = Math.sin(this.animTime * 2) * 5;
+    const titleY = 112 + titleBounce;
 
-    // Title shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.font = 'bold 72px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('BULL RUN', w / 2 + 3, titleY + 3);
 
-    // Title gold gradient
-    const titleGrad = ctx.createLinearGradient(w / 2 - 150, titleY - 30, w / 2 + 150, titleY + 30);
-    titleGrad.addColorStop(0, '#FFD700');
-    titleGrad.addColorStop(0.5, '#FFEE88');
-    titleGrad.addColorStop(1, '#FFD700');
+    // Title with soft gold glow
+    ctx.save();
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+    ctx.shadowBlur = 26;
+    ctx.font = 'bold 80px sans-serif';
+    const titleGrad = ctx.createLinearGradient(0, titleY - 38, 0, titleY + 38);
+    titleGrad.addColorStop(0, '#FFF3B0');
+    titleGrad.addColorStop(0.45, '#FFD700');
+    titleGrad.addColorStop(1, '#B8860B');
     ctx.fillStyle = titleGrad;
     ctx.fillText('BULL RUN', w / 2, titleY);
+    ctx.restore();
 
-    // Subtitle
-    ctx.fillStyle = '#888';
-    ctx.font = '18px sans-serif';
-    ctx.fillText('A Wall Street Adventure', w / 2, h * 0.3);
+    // Crisp dark outline so the glow doesn't blur the letterforms
+    ctx.font = 'bold 80px sans-serif';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(80, 55, 0, 0.85)';
+    ctx.strokeText('BULL RUN', w / 2, titleY);
+
+    // Subtitle with thin gold rules on either side
+    const subY = 172;
+    ctx.fillStyle = '#9aa0c8';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('A  WALL  STREET  ADVENTURE', w / 2, subY);
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 250, subY);
+    ctx.lineTo(w / 2 - 150, subY);
+    ctx.moveTo(w / 2 + 150, subY);
+    ctx.lineTo(w / 2 + 250, subY);
+    ctx.stroke();
 
     // Bull horns decoration
     ctx.strokeStyle = CONFIG.COLORS.BULL_GOLD;
     ctx.lineWidth = 3;
     // Left horn
     ctx.beginPath();
-    ctx.moveTo(w / 2 - 160, titleY);
-    ctx.quadraticCurveTo(w / 2 - 180, titleY - 40, w / 2 - 150, titleY - 50);
+    ctx.moveTo(w / 2 - 225, titleY);
+    ctx.quadraticCurveTo(w / 2 - 245, titleY - 40, w / 2 - 215, titleY - 50);
     ctx.stroke();
     // Right horn
     ctx.beginPath();
-    ctx.moveTo(w / 2 + 160, titleY);
-    ctx.quadraticCurveTo(w / 2 + 180, titleY - 40, w / 2 + 150, titleY - 50);
+    ctx.moveTo(w / 2 + 225, titleY);
+    ctx.quadraticCurveTo(w / 2 + 245, titleY - 40, w / 2 + 215, titleY - 50);
     ctx.stroke();
 
-    if (this.phase === 'title') {
-      // Blinking prompt
-      if (Math.floor(this.animTime * 2) % 2 === 0) {
-        ctx.fillStyle = CONFIG.COLORS.WHITE;
-        ctx.font = '22px sans-serif';
-        const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-        ctx.fillText(isMobile ? 'Tap to Start' : 'Press ENTER to Start', w / 2, h * 0.55);
-      }
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-      // Controls hint
-      ctx.fillStyle = '#555';
-      ctx.font = '14px sans-serif';
-      const isMobile2 = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-      if (isMobile2) {
-        ctx.fillText('Left side = Move  |  Right side: Tap = Jump, Hold = Crouch + Super Jump', w / 2, h * 0.65);
+    if (this.phase === 'title') {
+      // Pulsing START button
+      const pulse = 0.5 + Math.sin(this.animTime * 4) * 0.5;
+      const btnW = 300, btnH = 56;
+      const btnY = 290;
+      this._roundRect(ctx, w / 2 - btnW / 2, btnY, btnW, btnH, 28);
+      ctx.fillStyle = 'rgba(255, 215, 0, ' + (0.08 + pulse * 0.08) + ')';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 215, 0, ' + (0.45 + pulse * 0.45) + ')';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#FFE066';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(isMobile ? 'TAP TO START' : 'PRESS ENTER', w / 2, btnY + btnH / 2 + 1);
+
+      // Controls hint (two lines, kept well inside the viewport)
+      ctx.fillStyle = '#7880a8';
+      ctx.font = '15px sans-serif';
+      if (isMobile) {
+        ctx.fillText('Left side of screen: move', w / 2, 412);
+        ctx.fillText('Right side: tap to jump  •  hold to crouch, release for super jump', w / 2, 436);
       } else {
-        ctx.fillText('Arrow Keys / WASD to move  |  Space to jump  |  Down to crouch + super jump', w / 2, h * 0.65);
+        ctx.fillText('Arrow keys / WASD: move    •    Space: jump', w / 2, 412);
+        ctx.fillText('Hold Down to crouch, then jump for a super jump', w / 2, 436);
       }
     } else {
       // Character select
       ctx.fillStyle = CONFIG.COLORS.WHITE;
-      ctx.font = 'bold 26px sans-serif';
-      ctx.fillText('SELECT YOUR INVESTOR', w / 2, h * 0.4);
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('SELECT YOUR INVESTOR', w / 2, 230);
 
-      // Chad (left)
-      const chadX = w * 0.3;
-      const dianaX = w * 0.7;
-      const charY = h * 0.58;
+      this._drawCharCard(ctx, w / 2 - 235, 260, 0, 'Chad Stocksworth',
+        'The Momentum Trader', isMobile ? 'TAP LEFT SIDE' : '[1] or ←');
+      this._drawCharCard(ctx, w / 2 + 25, 260, 1, 'Diana Dividend',
+        'The Patient Investor', isMobile ? 'TAP RIGHT SIDE' : '[2] or →');
 
-      // Selection highlight
-      const selectedX = this.hoverIndex === 0 ? chadX : dianaX;
-      ctx.strokeStyle = CONFIG.COLORS.BULL_GOLD;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(selectedX - 55, charY - 50, 110, 120);
-      ctx.fillStyle = 'rgba(255,215,0,0.08)';
-      ctx.fillRect(selectedX - 55, charY - 50, 110, 120);
-
-      // Draw mini characters
-      this._drawMiniChad(ctx, chadX - 18, charY - 30);
-      this._drawMiniDiana(ctx, dianaX - 18, charY - 30);
-
-      // Names
-      ctx.fillStyle = this.hoverIndex === 0 ? CONFIG.COLORS.BULL_GOLD : '#AAA';
-      ctx.font = '16px sans-serif';
-      ctx.fillText('Chad Stocksworth', chadX, charY + 50);
-      ctx.fillStyle = '#777';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('[1] or LEFT', chadX, charY + 68);
-
-      ctx.fillStyle = this.hoverIndex === 1 ? CONFIG.COLORS.BULL_GOLD : '#AAA';
-      ctx.font = '16px sans-serif';
-      ctx.fillText('Diana Dividend', dianaX, charY + 50);
-      ctx.fillStyle = '#777';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('[2] or RIGHT', dianaX, charY + 68);
-
-      // Instruction
-      ctx.fillStyle = CONFIG.COLORS.WHITE;
-      ctx.font = '16px sans-serif';
-      const isMobileSelect = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-      ctx.fillText(isMobileSelect ? 'Tap to confirm' : 'Press ENTER to confirm', w / 2, h * 0.88);
+      // Confirm prompt (blinking)
+      if (Math.floor(this.animTime * 2) % 2 === 0) {
+        ctx.fillStyle = CONFIG.COLORS.WHITE;
+        ctx.font = '17px sans-serif';
+        ctx.fillText(isMobile ? 'Tap a side to choose and start' : 'Press ENTER to start', w / 2, 482);
+      }
     }
 
     // Loading tip at bottom
-    ctx.fillStyle = '#444';
+    ctx.fillStyle = '#50547a';
     ctx.font = 'italic 13px sans-serif';
-    ctx.fillText('"' + this.tips[this.tipIndex] + '"', w / 2, h * 0.95);
+    ctx.fillText('"' + this.tips[this.tipIndex] + '"', w / 2, h - 20);
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  _drawCharCard(ctx, x, y, idx, name, flavor, keyHint) {
+    const cw = 210, ch = 185;
+    const selected = this.hoverIndex === idx;
+
+    // Panel with glow when selected
+    ctx.save();
+    if (selected) {
+      ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+      ctx.shadowBlur = 18;
+    }
+    this._roundRect(ctx, x, y, cw, ch, 12);
+    ctx.fillStyle = selected ? 'rgba(30, 30, 66, 0.95)' : 'rgba(16, 16, 40, 0.9)';
+    ctx.fill();
+    ctx.restore();
+    this._roundRect(ctx, x, y, cw, ch, 12);
+    ctx.strokeStyle = selected ? CONFIG.COLORS.BULL_GOLD : '#3a3c5e';
+    ctx.lineWidth = selected ? 3 : 2;
+    ctx.stroke();
+
+    // Character sprite, scaled up (gentle bob when selected)
+    const scale = 1.6 + (selected ? Math.sin(this.animTime * 6) * 0.04 : 0);
+    const spriteW = 36 * scale;
+    ctx.save();
+    ctx.translate(x + cw / 2 - spriteW / 2, y + 14);
+    ctx.scale(scale, scale);
+    if (idx === 0) this._drawMiniChad(ctx, 0, 0);
+    else this._drawMiniDiana(ctx, 0, 0);
+    ctx.restore();
+
+    // Name / flavor / input hint
+    ctx.fillStyle = selected ? CONFIG.COLORS.BULL_GOLD : '#cccccc';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(name, x + cw / 2, y + 124);
+    ctx.fillStyle = '#8890b8';
+    ctx.font = 'italic 12px sans-serif';
+    ctx.fillText(flavor, x + cw / 2, y + 144);
+    ctx.fillStyle = selected ? '#c0a850' : '#555a7a';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(keyHint, x + cw / 2, y + 166);
   }
 
   _drawMiniChad(ctx, x, y) {
