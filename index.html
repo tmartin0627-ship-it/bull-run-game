@@ -9031,39 +9031,90 @@ function renderDebug() {
 // ==========================================
 //  Live Stock Ticker (Dow 30)
 // ==========================================
-async function fetchLiveStockData() {
-  const DOW30 = ['AAPL','MSFT','AMGN','AXP','BA','CAT','CRM','CSCO','CVX','DIS',
-    'GS','HD','HON','IBM','JNJ','JPM','KO','MCD','MMM','MRK',
-    'NKE','PG','TRV','UNH','V','VZ','WBA','WMT','DOW','INTC'];
+// Symbols shown in the live ticker. SPCX (SpaceX) is included so it goes
+// live automatically once the feeds list it; until then it's pinned below.
+const TICKER_SYMBOLS = ['SPCX','AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META',
+  'JPM','V','DIS','BA','KO','GS','NFLX','AMD'];
 
-  try {
-    // Try Yahoo Finance via CORS proxy
-    const symbols = DOW30.join(',');
-    const url = 'https://api.allorigins.win/get?url=' +
-      encodeURIComponent('https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + symbols + '&fields=symbol,regularMarketPrice,regularMarketChangePercent');
+// SpaceX listed on Nasdaq 2026-06-12: closed $160.95, +19% on debut. Used as a
+// pin (feeds may lag a brand-new symbol) and as the hardcoded last resort.
+const SPCX_FALLBACK = { symbol: 'SPCX', price: 160.95, change: 19.2 };
 
-    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    const json = await resp.json();
-    const data = JSON.parse(json.contents);
+// Public CORS relays, tried in order. Free stock endpoints don't send CORS
+// headers, so the browser needs a proxy; redundancy is what buys reliability.
+const CORS_PROXIES = [
+  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  u => 'https://thingproxy.freeboard.io/fetch/' + u,
+];
 
-    if (data.quoteResponse && data.quoteResponse.result) {
-      const stocks = data.quoteResponse.result.map(q => ({
-        symbol: q.symbol,
-        price: q.regularMarketPrice || 0,
-        change: q.regularMarketChangePercent || 0
-      }));
-      if (stocks.length > 10) {
-        // SPCX IPO'd 2026-06-12 (Nasdaq): closed $160.95, +19% day one.
-        // Pin it to the front; the live feed (Yahoo) may not carry it yet.
-        if (!stocks.some(s => s.symbol === 'SPCX'))
-          stocks.unshift({ symbol: 'SPCX', price: 160.95, change: 19.2 });
-        return stocks;
+async function proxiedFetch(url, timeoutMs = 6000) {
+  for (const wrap of CORS_PROXIES) {
+    try {
+      const resp = await fetch(wrap(url), { signal: AbortSignal.timeout(timeoutMs) });
+      if (resp.ok) {
+        const text = await resp.text();
+        if (text && text.length > 2) return text;
       }
-    }
-  } catch (e) {
-    console.warn('Live stock data unavailable, using fallback:', e.message);
+    } catch (e) { /* try the next proxy */ }
   }
-  return null; // Use fallback data from level
+  throw new Error('all proxies failed for ' + url);
+}
+
+function cleanQuote(symbol, price, change) {
+  return {
+    symbol,
+    price: Math.round(price * 100) / 100,
+    change: Math.round((change || 0) * 100) / 100,
+  };
+}
+
+// Source 1 — Yahoo v8 chart (no auth/crumb needed, unlike the old v7 quote).
+// One symbol per request, fired in parallel; gives price AND previous close,
+// so the % change is accurate. Partial success is fine.
+async function fetchFromYahoo(symbols) {
+  const settled = await Promise.allSettled(symbols.map(async sym => {
+    const text = await proxiedFetch(
+      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d');
+    const meta = JSON.parse(text).chart.result[0].meta;
+    const price = meta.regularMarketPrice;
+    const prev = meta.chartPreviousClose ?? meta.previousClose;
+    if (!isFinite(price) || price <= 0) throw new Error('no price for ' + sym);
+    return cleanQuote(sym, price, prev ? ((price - prev) / prev) * 100 : 0);
+  }));
+  return settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+}
+
+// Source 2 — Stooq batch CSV (free, no key, all symbols in one request).
+// Change here is intraday (close vs open) since the light feed omits prev close.
+async function fetchFromStooq(symbols) {
+  const list = symbols.map(s => s.toLowerCase() + '.us').join('+');
+  const text = await proxiedFetch(
+    'https://stooq.com/q/l/?s=' + list + '&f=sd2t2ohlcv&h&e=csv');
+  const out = [];
+  for (const line of text.trim().split('\n').slice(1)) {
+    const [sym, , , open, , , close] = line.split(',');
+    const price = parseFloat(close), o = parseFloat(open);
+    if (!sym || !isFinite(price) || price <= 0) continue;
+    out.push(cleanQuote(sym.replace(/\.us$/i, '').toUpperCase(), price, o ? ((price - o) / o) * 100 : 0));
+  }
+  return out;
+}
+
+async function fetchLiveStockData() {
+  const need = Math.ceil(TICKER_SYMBOLS.length / 2); // accept partial coverage
+  for (const source of [fetchFromYahoo, fetchFromStooq]) {
+    try {
+      const quotes = await source(TICKER_SYMBOLS);
+      if (quotes.length >= need) {
+        if (!quotes.some(q => q.symbol === 'SPCX')) quotes.unshift({ ...SPCX_FALLBACK });
+        return quotes;
+      }
+    } catch (e) {
+      console.warn('Live ticker source failed:', e.message);
+    }
+  }
+  return null; // every source failed — fall back to the level's hardcoded list
 }
 
 // Try to load live data on page load
