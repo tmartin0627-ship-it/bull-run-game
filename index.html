@@ -4004,9 +4004,9 @@ const LEVEL_SPACEX = {
   // Mid-level respawn points (x = flag center, placed on solid ground)
   checkpoints: [{ x: 3400 }, { x: 6400 }],
 
-  // Fallback ticker — SPACEX front and center on IPO day
+  // Fallback ticker — SPCX (real Nasdaq close $160.95, +19% on 2026-06-12 debut)
   tickerStocks: [
-    { symbol: 'SPACEX', price: 420.69, change: 69.42 },
+    { symbol: 'SPCX', price: 160.95, change: 19.2 },
     { symbol: 'TSLA', price: 488.54, change: 4.2 },
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
     { symbol: 'MSFT', price: 415.30, change: 0.8 },
@@ -4159,7 +4159,7 @@ const LEVEL_SPACEX = {
     { x: 7000, text: 'APES TOGETHER STRONG', color: '#00FF88', h: 160, size: 16 },
     { x: 7600, text: 'PAPER HANDS NGMI', color: '#FF4444', h: 140, size: 18 },
     { x: 8500, text: 'MARS OR BUST', color: '#FFD700', h: 160, size: 20 },
-    { x: 8800, text: '$420.69', color: '#00FF88', h: 130, size: 24 },
+    { x: 8800, text: 'SPCX $160.95 +19%', color: '#00FF88', h: 130, size: 18 },
   ],
 };
 
@@ -9053,8 +9053,10 @@ async function fetchLiveStockData() {
         change: q.regularMarketChangePercent || 0
       }));
       if (stocks.length > 10) {
-        // SPACEX just IPO'd — pin it to the front of the live ticker
-        stocks.unshift({ symbol: 'SPACEX', price: 420.69, change: 69.42 });
+        // SPCX IPO'd 2026-06-12 (Nasdaq): closed $160.95, +19% day one.
+        // Pin it to the front; the live feed (Yahoo) may not carry it yet.
+        if (!stocks.some(s => s.symbol === 'SPCX'))
+          stocks.unshift({ symbol: 'SPCX', price: 160.95, change: 19.2 });
         return stocks;
       }
     }
