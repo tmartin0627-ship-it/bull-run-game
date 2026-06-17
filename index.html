@@ -4319,9 +4319,11 @@ const LEVEL_1 = {
     // Above elevated platform area
     { x: 620, y: 210, contents: 'greenCandle' },  // One green candle early on
 
-    // Section 2
-    { x: 1900, y: 240, contents: 'bull' },
-    { x: 1956, y: 240, contents: 'bull' },
+    // Section 2 — lowered to y=280 so they're reachable with a normal ground
+    // jump (max jump height ~93px; at y=240 the block bottom sat right at the
+    // jump apex, making it effectively impossible to hit from below)
+    { x: 1900, y: 280, contents: 'bull' },
+    { x: 1956, y: 280, contents: 'bull' },
     { x: 2150, y: 220, contents: 'bull' },
 
     // Challenge area
