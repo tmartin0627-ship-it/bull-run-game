@@ -68,6 +68,9 @@ const CONFIG = {
   PLAYER_CROUCH_TIME: 0.25,          // Seconds to hold crouch before super jump is ready
   PLAYER_CROUCH_HEIGHT: 34,          // Crouched height (shorter)
   PLAYER_STOMP_BOUNCE: -350,
+  PLAYER_COYOTE_TIME: 0.1,           // Grace period to jump after walking off a ledge
+  PLAYER_JUMP_BUFFER_TIME: 0.12,     // Early jump presses are held until landing
+  PLAYER_JUMP_CUT_MULTIPLIER: 0.45,  // Releasing jump early cuts upward velocity
   PLAYER_MAX_LIVES: 3,
   PLAYER_INVINCIBILITY_TIME: 2.0,
   PLAYER_POWERED_WIDTH: 42,
@@ -227,6 +230,7 @@ class InputHandler {
   get right() { return this.isHeld('ArrowRight') || this.isHeld('KeyD') || this.touchState.right; }
   get down() { return this.isHeld('ArrowDown') || this.isHeld('KeyS') || this.touchState.down; }
   get jump() { return this.wasPressed('Space') || this.wasPressed('ArrowUp') || this.wasPressed('KeyW'); }
+  get jumpHeld() { return this.isHeld('Space') || this.isHeld('ArrowUp') || this.isHeld('KeyW'); }
   get enter() { return this.wasPressed('Enter') || this.wasPressed('Space'); }
 }
   </script>
@@ -420,8 +424,9 @@ class TouchControls {
   render(ctx, screenW, screenH, gameState) {
     if (!this.active) return;
 
-    // Always show hints on menus, fade during gameplay
-    const alpha = gameState === GameState.PLAYING ? this.hintAlpha : 0.7;
+    // Hints only apply to gameplay — menu screens draw their own prompts
+    if (gameState !== GameState.PLAYING) return;
+    const alpha = this.hintAlpha;
     if (alpha <= 0.01) return; // fully faded, skip rendering
 
     ctx.save();
@@ -452,9 +457,10 @@ class TouchControls {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // Left side hints
+    // Left side hints (kept above the bottom edge so curved phone corners
+    // and the home indicator don't clip the labels)
     const leftCenterX = screenW * 0.25;
-    const hintY = screenH * 0.85;
+    const hintY = screenH * 0.76;
 
     // Left arrow
     ctx.fillStyle = 'rgba(255, 255, 255, ' + (alpha * 0.4) + ')';
@@ -819,6 +825,16 @@ class ParticleSystem {
     });
   }
 
+  dust(x, y, count) {
+    this.emit(x, y, count || 6, {
+      speed: 70,
+      upwardBias: 40,
+      colors: ['#9a9ab8', '#7a7a98', '#b8b8d0'],
+      life: 0.35,
+      size: 4
+    });
+  }
+
   update(dt) {
     for (const p of this.particles) {
       if (p.active) p.update(dt);
@@ -999,6 +1015,63 @@ class Platform {
         ctx.fillRect(sx - 2, sy - 2, this.width + 4, this.height + 4);
         ctx.globalAlpha = 1;
         break;
+
+      case 'rocket': {
+        // Side-view booster rocket you can ride (nose to the right)
+        const cy = sy + this.height / 2;
+        const bodyW = this.width - 24;
+        // Body
+        ctx.fillStyle = '#E8E8F0';
+        ctx.fillRect(sx + 10, sy, bodyW, this.height);
+        ctx.fillStyle = '#C8C8D8';
+        ctx.fillRect(sx + 10, sy + this.height - 5, bodyW, 5);
+        // Nose cone
+        ctx.fillStyle = '#FF4444';
+        ctx.beginPath();
+        ctx.moveTo(sx + 10 + bodyW, sy);
+        ctx.lineTo(sx + this.width + 4, cy);
+        ctx.lineTo(sx + 10 + bodyW, sy + this.height);
+        ctx.closePath();
+        ctx.fill();
+        // Tail fins
+        ctx.fillStyle = '#FF4444';
+        ctx.beginPath();
+        ctx.moveTo(sx + 10, sy);
+        ctx.lineTo(sx, sy - 6);
+        ctx.lineTo(sx + 4, sy + 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(sx + 10, sy + this.height);
+        ctx.lineTo(sx, sy + this.height + 6);
+        ctx.lineTo(sx + 4, sy + this.height - 4);
+        ctx.closePath();
+        ctx.fill();
+        // Portholes
+        ctx.fillStyle = '#4488FF';
+        for (let px = sx + 22; px < sx + 10 + bodyW - 10; px += 22) {
+          ctx.beginPath();
+          ctx.arc(px, cy, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Exhaust flame (animated via position-based flicker)
+        const flick = 4 + Math.abs(Math.sin((this.x + this.y) * 0.05 + Date.now() * 0.02)) * 6;
+        ctx.fillStyle = '#FFA500';
+        ctx.beginPath();
+        ctx.moveTo(sx + 2, sy + 3);
+        ctx.lineTo(sx - 8 - flick, cy);
+        ctx.lineTo(sx + 2, sy + this.height - 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#FFE066';
+        ctx.beginPath();
+        ctx.moveTo(sx + 2, sy + 6);
+        ctx.lineTo(sx - 2 - flick * 0.5, cy);
+        ctx.lineTo(sx + 2, sy + this.height - 6);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
     }
   }
 }
@@ -3062,6 +3135,90 @@ class ShortSeller {
 }
   </script>
   <script>
+class Checkpoint {
+  constructor(x, groundY) {
+    this.width = 40;
+    this.height = 90;
+    this.x = x - this.width / 2;
+    this.y = groundY - this.height;
+    this.activated = false;
+    this.animTime = Math.random() * Math.PI * 2;
+    this.raiseAnim = 0; // 0 = flag lowered, 1 = flag raised
+  }
+
+  activate() {
+    this.activated = true;
+  }
+
+  update(dt) {
+    this.animTime += dt;
+    if (this.activated && this.raiseAnim < 1) {
+      this.raiseAnim = Math.min(1, this.raiseAnim + dt * 2.5);
+    }
+  }
+
+  render(ctx, camera) {
+    const sx = this.x - camera.x;
+    const sy = this.y - camera.y;
+    if (sx + this.width < -20 || sx > CONFIG.VIRTUAL_WIDTH + 20) return;
+
+    const poleX = sx + this.width / 2;
+    const poleTop = sy + 4;
+    const poleBottom = sy + this.height;
+
+    // Glow when active
+    if (this.activated) {
+      ctx.globalAlpha = 0.15 + Math.sin(this.animTime * 4) * 0.05;
+      ctx.fillStyle = '#00FF88';
+      ctx.beginPath();
+      ctx.arc(poleX, poleTop + 14, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Base
+    ctx.fillStyle = '#5a5a7a';
+    ctx.fillRect(poleX - 10, poleBottom - 6, 20, 6);
+    ctx.fillStyle = '#6a6a8a';
+    ctx.fillRect(poleX - 7, poleBottom - 10, 14, 4);
+
+    // Pole
+    ctx.fillStyle = this.activated ? '#d0d0e8' : '#8a8a9a';
+    ctx.fillRect(poleX - 2, poleTop, 4, this.height - 10);
+
+    // Pole top orb
+    ctx.fillStyle = this.activated ? '#FFD700' : '#6a6a7a';
+    ctx.beginPath();
+    ctx.arc(poleX, poleTop, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Flag: slides up the pole as it activates
+    const flagW = 26;
+    const flagH = 18;
+    const flagY = poleTop + 4 + (1 - this.raiseAnim) * (this.height - 40);
+    const wave = Math.sin(this.animTime * 5) * 2;
+
+    ctx.fillStyle = this.activated ? '#00CC66' : '#555570';
+    ctx.beginPath();
+    ctx.moveTo(poleX + 2, flagY);
+    ctx.lineTo(poleX + 2 + flagW, flagY + 3 + wave);
+    ctx.lineTo(poleX + 2 + flagW, flagY + flagH - 3 + wave);
+    ctx.lineTo(poleX + 2, flagY + flagH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Up-trend chart line on the flag
+    ctx.strokeStyle = this.activated ? '#FFFFFF' : '#8a8aa0';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(poleX + 6, flagY + flagH - 6);
+    ctx.lineTo(poleX + 12, flagY + flagH - 9 + wave * 0.5);
+    ctx.lineTo(poleX + 17, flagY + flagH - 7 + wave * 0.5);
+    ctx.lineTo(poleX + 23, flagY + 5 + wave);
+    ctx.stroke();
+  }
+}
+
 class Player {
   constructor(x, y, characterType) {
     this.x = x;
@@ -3104,6 +3261,16 @@ class Player {
     this.jumpedThisFrame = false;
     this.superJumpedThisFrame = false;
 
+    // Jump forgiveness (coyote time + input buffering) and variable jump height
+    this.coyoteTimer = 0;
+    this.jumpBufferTimer = 0;
+    this.jumpCutAvailable = false;
+
+    // Landing feedback (read by main.js for dust effects)
+    this.landedThisFrame = false;
+    this.landingImpact = 0;
+    this.landSquashTimer = 0;
+
     // Moving platform velocity transfer (set by main.js each frame)
     this._platformVx = 0;
     this._platformVy = 0;
@@ -3128,7 +3295,21 @@ class Player {
     // === JUMP (check BEFORE crouch so releasing down + jumping on same frame still works) ===
     this.jumpedThisFrame = false;
     this.superJumpedThisFrame = false;
-    if (input.jump && this.onGround) {
+
+    // Coyote time: brief grace period to jump after leaving a ledge
+    if (this.onGround) {
+      this.coyoteTimer = CONFIG.PLAYER_COYOTE_TIME;
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
+    }
+    // Jump buffering: remember a jump pressed slightly before landing
+    if (input.jump) {
+      this.jumpBufferTimer = CONFIG.PLAYER_JUMP_BUFFER_TIME;
+    } else {
+      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
+    }
+
+    if (this.jumpBufferTimer > 0 && (this.onGround || this.coyoteTimer > 0)) {
       if (this.superJumpReady) {
         // SUPER JUMP from crouch!
         this.vy = CONFIG.PLAYER_SUPER_JUMP_VELOCITY;
@@ -3155,6 +3336,11 @@ class Player {
       this.crouchTimer = 0;
       this.superJumpReady = false;
       this.onGround = false;
+      this.coyoteTimer = 0;
+      this.jumpBufferTimer = 0;
+      // Variable jump height only applies while the jump key is actually held
+      // (touch jumps fire on release, so they always get full height)
+      this.jumpCutAvailable = !!input.jumpHeld;
     }
     // Clear platform velocity each frame (re-set by main.js if still on platform)
     this._platformVx = 0;
@@ -3211,8 +3397,28 @@ class Player {
     this.vx = Math.clamp(this.vx, -maxSpeed, maxSpeed);
 
     // === PHYSICS ===
+    // Variable jump height: releasing jump early cuts the ascent
+    if (this.jumpCutAvailable) {
+      if (this.vy >= 0) {
+        this.jumpCutAvailable = false;
+      } else if (!input.jumpHeld) {
+        this.vy *= CONFIG.PLAYER_JUMP_CUT_MULTIPLIER;
+        this.jumpCutAvailable = false;
+      }
+    }
+
+    const wasOnGround = this.onGround;
+    const fallSpeed = this.vy;
     applyGravity(this, dt);
     moveAndCollide(this, solids, dt);
+
+    // Landing detection (for dust particles and squash animation)
+    this.landedThisFrame = !wasOnGround && this.onGround;
+    if (this.landedThisFrame) {
+      this.landingImpact = fallSpeed;
+      if (fallSpeed > 450) this.landSquashTimer = 0.12;
+    }
+    if (this.landSquashTimer > 0) this.landSquashTimer -= dt;
 
     // Clamp to left edge of level
     if (this.x < 0) {
@@ -3311,6 +3517,10 @@ class Player {
     this.crouching = false;
     this.crouchTimer = 0;
     this.superJumpReady = false;
+    this.coyoteTimer = 0;
+    this.jumpBufferTimer = 0;
+    this.jumpCutAvailable = false;
+    this.landSquashTimer = 0;
     this.width = CONFIG.PLAYER_WIDTH;
     this.height = CONFIG.PLAYER_HEIGHT;
     this.hasHeadband = false;
@@ -3433,6 +3643,27 @@ class Player {
       ctx.textAlign = 'center';
       const bounce = Math.sin(this.animTime * 8) * 3;
       ctx.fillText('\u25B2', screenX + this.width / 2, screenY - 8 + bounce);
+    }
+
+    // Squash & stretch: stretch along velocity in the air, squash on hard landings
+    if (!this.deathAnimating && !this.crouching) {
+      let squashX = 1, squashY = 1;
+      if (this.landSquashTimer > 0 && this.onGround) {
+        const t = this.landSquashTimer / 0.12;
+        squashX = 1 + 0.16 * t;
+        squashY = 1 - 0.2 * t;
+      } else if (!this.onGround) {
+        const stretch = Math.min(Math.abs(this.vy) / 900, 1) * 0.1;
+        squashY = 1 + stretch;
+        squashX = 1 - stretch * 0.6;
+      }
+      if (squashX !== 1 || squashY !== 1) {
+        const pivotX = screenX + this.width / 2;
+        const pivotY = screenY + this.height;
+        ctx.translate(pivotX, pivotY);
+        ctx.scale(squashX, squashY);
+        ctx.translate(-pivotX, -pivotY);
+      }
     }
 
     if (!this.facingRight) {
@@ -3761,11 +3992,185 @@ class Player {
 // Platforms are optional elevated areas, NOT on the ground path unless intentional
 // Pits: gaps between ground segments
 
+// LEVEL 0 — SpaceX IPO launch pad. The new first level: gentle difficulty,
+// rockets launching in the background, and meme billboards everywhere.
+const LEVEL_SPACEX = {
+  name: "SpaceX IPO",
+  theme: 'launchPad',
+  width: 9000,
+  playerStart: { x: 96, y: 370 },
+  goalPosition: { x: 8700, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 3400 }, { x: 6400 }],
+
+  // Fallback ticker — SPCX (real Nasdaq close $160.95, +19% on 2026-06-12 debut)
+  tickerStocks: [
+    { symbol: 'SPCX', price: 160.95, change: 19.2 },
+    { symbol: 'TSLA', price: 488.54, change: 4.2 },
+    { symbol: 'AAPL', price: 232.47, change: 1.2 },
+    { symbol: 'MSFT', price: 415.30, change: 0.8 },
+    { symbol: 'NVDA', price: 142.62, change: 2.7 },
+    { symbol: 'BA', price: 178.42, change: -6.9 },
+    { symbol: 'AMZN', price: 228.93, change: 1.1 },
+    { symbol: 'GS', price: 612.55, change: 0.4 },
+    { symbol: 'JPM', price: 265.80, change: 0.7 },
+    { symbol: 'V', price: 311.04, change: 0.2 },
+    { symbol: 'DIS', price: 112.36, change: -0.5 },
+    { symbol: 'KO', price: 71.15, change: 0.1 },
+  ],
+
+  groundSegments: [
+    // Section 1: Mission control tutorial (0-1600) — long flat runway
+    { x: 0, width: 1600 },
+    // Pit 1 (width=120, from 1600 to 1720) — narrow, easy
+    { x: 1720, width: 1280 },
+    // Pit 2 (width=144, from 3000 to 3144)
+    { x: 3144, width: 1456 },
+    // Pit 3 (width=150, from 4600 to 4750)
+    { x: 4750, width: 1250 },
+    // Pit 4 (width=144, from 6000 to 6144)
+    { x: 6144, width: 1056 },
+    // Pit 5 (width=156, from 7200 to 7356)
+    { x: 7356, width: 1644 },
+  ],
+
+  // NOTE: all pits are <=156px so a running jump clears them. Bonus
+  // platforms are kept OFF the pit takeoff lines — an overhead platform
+  // right where you jump would block the jump and drop you in the pit.
+  platforms: [
+    // Tutorial hops (over solid ground)
+    { x: 500, y: 340, w: 140, h: 16, type: 'ledge' },
+    { x: 700, y: 290, w: 120, h: 16, type: 'ledge' },
+    { x: 1300, y: 320, w: 120, h: 16, type: 'ledge' },
+    // Section 2 — payload crates
+    { x: 2000, y: 330, w: 140, h: 16, type: 'desk' },
+    { x: 2200, y: 280, w: 120, h: 16, type: 'desk' },
+    { x: 2700, y: 320, w: 130, h: 16, type: 'ledge' },
+    // Section 3
+    { x: 3400, y: 330, w: 130, h: 16, type: 'ledge' },
+    { x: 3700, y: 330, w: 150, h: 16, type: 'desk' },
+    { x: 3950, y: 280, w: 130, h: 16, type: 'desk' },
+    { x: 4200, y: 330, w: 120, h: 16, type: 'ledge' },
+    // Section 4
+    { x: 5000, y: 330, w: 140, h: 16, type: 'ledge' },
+    { x: 5300, y: 280, w: 140, h: 16, type: 'desk' },
+    { x: 5600, y: 330, w: 120, h: 16, type: 'ledge' },
+    // Section 5
+    { x: 6500, y: 330, w: 140, h: 16, type: 'desk' },
+    { x: 6800, y: 280, w: 120, h: 16, type: 'desk' },
+    // Victory run bonus route
+    { x: 8000, y: 330, w: 150, h: 16, type: 'ledge' },
+    { x: 8300, y: 280, w: 130, h: 16, type: 'ledge' },
+  ],
+
+  movingPlatforms: [
+    // Rocket ferry across pit 3 (optional — pit is jumpable; this is flair)
+    { x: 4600, y: 360, w: 110, h: 18, type: 'rocket', speed: 50, waypoints: [{ x: 4590, y: 360 }, { x: 4690, y: 360 }] },
+    // Vertical booster elevator up to a dividend coin (bonus side route)
+    { x: 5650, y: 380, w: 110, h: 18, type: 'rocket', speed: 45, waypoints: [{ x: 5650, y: 380 }, { x: 5650, y: 240 }] },
+    // Rocket ferry across pit 5 (optional flair)
+    { x: 7200, y: 365, w: 110, h: 18, type: 'rocket', speed: 55, waypoints: [{ x: 7190, y: 365 }, { x: 7290, y: 365 }] },
+  ],
+
+  questionBlocks: [
+    { x: 600, y: 320, contents: 'bull' },
+    { x: 648, y: 320, contents: 'greenCandle' },
+    { x: 1900, y: 320, contents: 'bull' },
+    { x: 2600, y: 320, contents: 'hodlItem' },
+    { x: 3600, y: 320, contents: 'bull' },
+    { x: 5100, y: 320, contents: 'greenCandle' },
+    { x: 6600, y: 320, contents: 'bull' },
+    { x: 8200, y: 320, contents: 'hodlItem' },
+  ],
+
+  enemies: [
+    // Gentle intro — lots of runway before the first bear
+    { type: 'baby', x: 900, y: 396, patrolLeft: 800, patrolRight: 1100 },
+    { type: 'baby', x: 2100, y: 396, patrolLeft: 1900, patrolRight: 2400 },
+    { type: 'baby', x: 2700, y: 396, patrolLeft: 2550, patrolRight: 2900 },
+    { type: 'baby', x: 3500, y: 396, patrolLeft: 3300, patrolRight: 3700 },
+    { type: 'baby', x: 4100, y: 396, patrolLeft: 3900, patrolRight: 4400 },
+    { type: 'baby', x: 5200, y: 396, patrolLeft: 4950, patrolRight: 5500 },
+    { type: 'flashTrader', x: 5700, y: 402, patrolLeft: 5550, patrolRight: 5950 },
+    { type: 'baby', x: 6700, y: 396, patrolLeft: 6450, patrolRight: 6950 },
+    { type: 'grizzly', x: 7800, y: 378, patrolLeft: 7500, patrolRight: 8100 },
+    { type: 'baby', x: 8450, y: 396, patrolLeft: 8350, patrolRight: 8600 },
+  ],
+
+  bulls: [
+    // Welcome line on the runway
+    { x: 200, y: 400 }, { x: 250, y: 400 }, { x: 300, y: 400 }, { x: 350, y: 400 },
+    // Tutorial platforms
+    { x: 540, y: 300 }, { x: 590, y: 300 },
+    { x: 730, y: 250 }, { x: 780, y: 250 },
+    // Arc over pit 1
+    { x: 1590, y: 310 }, { x: 1640, y: 290 }, { x: 1690, y: 310 },
+    // Section 2 ground line
+    { x: 1800, y: 400 }, { x: 1850, y: 400 }, { x: 1900, y: 400 },
+    { x: 2040, y: 290 }, { x: 2090, y: 290 },
+    { x: 2240, y: 240 }, { x: 2290, y: 240 },
+    // Arc over pit 2
+    { x: 3000, y: 310 }, { x: 3050, y: 290 }, { x: 3100, y: 310 },
+    // Section 3
+    { x: 3300, y: 400 }, { x: 3350, y: 400 },
+    { x: 3740, y: 290 }, { x: 3790, y: 290 },
+    { x: 3990, y: 240 }, { x: 4040, y: 240 },
+    { x: 4240, y: 290 },
+    // "NUMBER GO UP" staircase
+    { x: 4850, y: 390 }, { x: 4900, y: 360 }, { x: 4950, y: 330 },
+    { x: 5000, y: 300 }, { x: 5050, y: 270 },
+    // Section 4
+    { x: 5340, y: 240 }, { x: 5390, y: 240 },
+    { x: 5640, y: 290 },
+    // Arc over pit 4
+    { x: 6040, y: 310 }, { x: 6090, y: 290 }, { x: 6140, y: 310 },
+    // Section 5
+    { x: 6540, y: 290 }, { x: 6590, y: 290 },
+    { x: 6840, y: 240 },
+    // Victory run
+    { x: 7500, y: 400 }, { x: 7550, y: 400 }, { x: 7600, y: 400 },
+    { x: 8040, y: 290 }, { x: 8090, y: 290 },
+    { x: 8340, y: 240 }, { x: 8390, y: 240 },
+  ],
+
+  dividendCoins: [
+    { x: 725, y: 220 },    // Above the tutorial platforms
+    { x: 3990, y: 210 },   // Above section 3 high desk
+    { x: 5680, y: 205 },   // Top of the booster elevator ride
+  ],
+
+  shortSqueezePads: [
+    { x: 1450, y: 416 },   // Before pit 1 — moon those bulls
+    { x: 4480, y: 416 },   // Before pit 3
+    { x: 7050, y: 416 },   // Before pit 5
+  ],
+
+  memeSigns: [
+    { x: 300, text: 'SPACEX IPO TODAY', color: '#FFD700', h: 170, size: 22 },
+    { x: 1100, text: 'TO THE MOON', color: '#00FF88', h: 150, size: 20 },
+    { x: 1900, text: 'WEN LAMBO?', color: '#FF66CC', h: 140, size: 20 },
+    { x: 2500, text: 'FUNDING SECURED', color: '#00CCFF', h: 160, size: 18 },
+    { x: 3330, text: 'HODL', color: '#FFD700', h: 130, size: 26 },
+    { x: 4150, text: 'DIAMOND HANDS', color: '#88DDFF', h: 150, size: 18 },
+    { x: 4950, text: 'NUMBER GO UP', color: '#00FF88', h: 210, size: 18 },
+    { x: 5750, text: 'SUCH ROCKET. MUCH WOW.', color: '#FFAA00', h: 140, size: 16 },
+    { x: 6480, text: 'THIS IS THE WAY', color: '#FF66CC', h: 150, size: 18 },
+    { x: 7000, text: 'APES TOGETHER STRONG', color: '#00FF88', h: 160, size: 16 },
+    { x: 7600, text: 'PAPER HANDS NGMI', color: '#FF4444', h: 140, size: 18 },
+    { x: 8500, text: 'MARS OR BUST', color: '#FFD700', h: 160, size: 20 },
+    { x: 8800, text: 'SPCX $160.95 +19%', color: '#00FF88', h: 130, size: 18 },
+  ],
+};
+
 const LEVEL_1 = {
   name: "Wall Street",
   width: 9600,
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 9300, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 3200 }, { x: 6800 }],
 
   // Dow 30 stock ticker — fallback data (overridden by live API fetch if available)
   tickerStocks: [
@@ -3985,8 +4390,8 @@ const LEVEL_1 = {
   shortSqueezePads: [
     { x: 1470, y: 416 },   // Before pit 1 — helps clear it
     { x: 3570, y: 416 },   // Before pit 3 — reach high platform
-    { x: 5200, y: 416 },   // Before pit 4 area
-    { x: 7650, y: 416 },   // Before pit 7 — launch into victory run
+    { x: 5040, y: 416 },   // Before pit 4 area
+    { x: 7430, y: 416 },   // Before pit 7 — launch into victory run
   ],
 
   // Red Candle danger zones: { x, width } — red candles fall periodically in these areas
@@ -4081,6 +4486,9 @@ const LEVEL_2 = {
   width: 12000,
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 11700, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 4000 }, { x: 8600 }],
 
   tickerStocks: [
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
@@ -4488,6 +4896,9 @@ const LEVEL_3 = {
   width: 14400,
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 14100, y: 380 },
+
+  // Mid-level respawn points (x = flag center, placed on solid ground)
+  checkpoints: [{ x: 3600 }, { x: 7900 }, { x: 11400 }],
 
   tickerStocks: [
     { symbol: 'AAPL', price: 232.47, change: 1.2 },
@@ -4974,6 +5385,8 @@ function loadLevel(levelData) {
     collectibles: [],
     shortSqueezePads: [],
     movingPlatforms: [],
+    checkpoints: (levelData.checkpoints || []).map(c => new Checkpoint(c.x, 432)),
+    memeSigns: levelData.memeSigns || [],
     marketCrashZones: levelData.marketCrashZones ? levelData.marketCrashZones.map(z => ({ ...z, triggered: false })) : [],
     redCandleZones: levelData.redCandleZones || [],
     redCandleTimer: 0,
@@ -5519,6 +5932,30 @@ class TitleScreen {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
+    // Twinkling stars (deterministic placement)
+    ctx.fillStyle = '#FFFFFF';
+    for (let i = 0; i < 50; i++) {
+      const sx = (i * 193.7) % w;
+      const sy = (i * 113.3) % (h * 0.45);
+      ctx.globalAlpha = Math.max(0.05, 0.35 + Math.sin(this.animTime * 1.5 + i * 1.7) * 0.3);
+      ctx.fillRect(sx, sy, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Rising market chart line behind the skyline
+    const chartPts = [
+      [0, 0.88], [0.1, 0.8], [0.18, 0.85], [0.3, 0.72], [0.38, 0.78],
+      [0.5, 0.62], [0.6, 0.68], [0.72, 0.52], [0.8, 0.58], [1.0, 0.36]
+    ];
+    ctx.strokeStyle = 'rgba(0, 255, 136, 0.16)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i < chartPts.length; i++) {
+      if (i === 0) ctx.moveTo(chartPts[i][0] * w, chartPts[i][1] * h);
+      else ctx.lineTo(chartPts[i][0] * w, chartPts[i][1] * h);
+    }
+    ctx.stroke();
+
     // City silhouette at bottom
     ctx.fillStyle = '#0a0a1a';
     const buildings = [
@@ -5544,110 +5981,164 @@ class TitleScreen {
     }
 
     // Title: "BULL RUN"
-    const titleBounce = Math.sin(this.animTime * 2) * 6;
-    const titleY = h * 0.2 + titleBounce;
+    const titleBounce = Math.sin(this.animTime * 2) * 5;
+    const titleY = 112 + titleBounce;
 
-    // Title shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.font = 'bold 72px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('BULL RUN', w / 2 + 3, titleY + 3);
 
-    // Title gold gradient
-    const titleGrad = ctx.createLinearGradient(w / 2 - 150, titleY - 30, w / 2 + 150, titleY + 30);
-    titleGrad.addColorStop(0, '#FFD700');
-    titleGrad.addColorStop(0.5, '#FFEE88');
-    titleGrad.addColorStop(1, '#FFD700');
+    // Title with soft gold glow
+    ctx.save();
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+    ctx.shadowBlur = 26;
+    ctx.font = 'bold 80px sans-serif';
+    const titleGrad = ctx.createLinearGradient(0, titleY - 38, 0, titleY + 38);
+    titleGrad.addColorStop(0, '#FFF3B0');
+    titleGrad.addColorStop(0.45, '#FFD700');
+    titleGrad.addColorStop(1, '#B8860B');
     ctx.fillStyle = titleGrad;
     ctx.fillText('BULL RUN', w / 2, titleY);
+    ctx.restore();
 
-    // Subtitle
-    ctx.fillStyle = '#888';
-    ctx.font = '18px sans-serif';
-    ctx.fillText('A Wall Street Adventure', w / 2, h * 0.3);
+    // Crisp dark outline so the glow doesn't blur the letterforms
+    ctx.font = 'bold 80px sans-serif';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(80, 55, 0, 0.85)';
+    ctx.strokeText('BULL RUN', w / 2, titleY);
+
+    // Subtitle with thin gold rules on either side
+    const subY = 172;
+    ctx.fillStyle = '#9aa0c8';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('A  WALL  STREET  ADVENTURE', w / 2, subY);
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 250, subY);
+    ctx.lineTo(w / 2 - 150, subY);
+    ctx.moveTo(w / 2 + 150, subY);
+    ctx.lineTo(w / 2 + 250, subY);
+    ctx.stroke();
 
     // Bull horns decoration
     ctx.strokeStyle = CONFIG.COLORS.BULL_GOLD;
     ctx.lineWidth = 3;
     // Left horn
     ctx.beginPath();
-    ctx.moveTo(w / 2 - 160, titleY);
-    ctx.quadraticCurveTo(w / 2 - 180, titleY - 40, w / 2 - 150, titleY - 50);
+    ctx.moveTo(w / 2 - 225, titleY);
+    ctx.quadraticCurveTo(w / 2 - 245, titleY - 40, w / 2 - 215, titleY - 50);
     ctx.stroke();
     // Right horn
     ctx.beginPath();
-    ctx.moveTo(w / 2 + 160, titleY);
-    ctx.quadraticCurveTo(w / 2 + 180, titleY - 40, w / 2 + 150, titleY - 50);
+    ctx.moveTo(w / 2 + 225, titleY);
+    ctx.quadraticCurveTo(w / 2 + 245, titleY - 40, w / 2 + 215, titleY - 50);
     ctx.stroke();
 
-    if (this.phase === 'title') {
-      // Blinking prompt
-      if (Math.floor(this.animTime * 2) % 2 === 0) {
-        ctx.fillStyle = CONFIG.COLORS.WHITE;
-        ctx.font = '22px sans-serif';
-        const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-        ctx.fillText(isMobile ? 'Tap to Start' : 'Press ENTER to Start', w / 2, h * 0.55);
-      }
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-      // Controls hint
-      ctx.fillStyle = '#555';
-      ctx.font = '14px sans-serif';
-      const isMobile2 = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-      if (isMobile2) {
-        ctx.fillText('Left side = Move  |  Right side: Tap = Jump, Hold = Crouch + Super Jump', w / 2, h * 0.65);
+    if (this.phase === 'title') {
+      // Pulsing START button
+      const pulse = 0.5 + Math.sin(this.animTime * 4) * 0.5;
+      const btnW = 300, btnH = 56;
+      const btnY = 290;
+      this._roundRect(ctx, w / 2 - btnW / 2, btnY, btnW, btnH, 28);
+      ctx.fillStyle = 'rgba(255, 215, 0, ' + (0.08 + pulse * 0.08) + ')';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 215, 0, ' + (0.45 + pulse * 0.45) + ')';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#FFE066';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(isMobile ? 'TAP TO START' : 'PRESS ENTER', w / 2, btnY + btnH / 2 + 1);
+
+      // Controls hint (two lines, kept well inside the viewport)
+      ctx.fillStyle = '#7880a8';
+      ctx.font = '15px sans-serif';
+      if (isMobile) {
+        ctx.fillText('Left side of screen: move', w / 2, 412);
+        ctx.fillText('Right side: tap to jump  •  hold to crouch, release for super jump', w / 2, 436);
       } else {
-        ctx.fillText('Arrow Keys / WASD to move  |  Space to jump  |  Down to crouch + super jump', w / 2, h * 0.65);
+        ctx.fillText('Arrow keys / WASD: move    •    Space: jump', w / 2, 412);
+        ctx.fillText('Hold Down to crouch, then jump for a super jump', w / 2, 436);
       }
     } else {
       // Character select
       ctx.fillStyle = CONFIG.COLORS.WHITE;
-      ctx.font = 'bold 26px sans-serif';
-      ctx.fillText('SELECT YOUR INVESTOR', w / 2, h * 0.4);
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('SELECT YOUR INVESTOR', w / 2, 230);
 
-      // Chad (left)
-      const chadX = w * 0.3;
-      const dianaX = w * 0.7;
-      const charY = h * 0.58;
+      this._drawCharCard(ctx, w / 2 - 235, 260, 0, 'Chad Stocksworth',
+        'The Momentum Trader', isMobile ? 'TAP LEFT SIDE' : '[1] or ←');
+      this._drawCharCard(ctx, w / 2 + 25, 260, 1, 'Diana Dividend',
+        'The Patient Investor', isMobile ? 'TAP RIGHT SIDE' : '[2] or →');
 
-      // Selection highlight
-      const selectedX = this.hoverIndex === 0 ? chadX : dianaX;
-      ctx.strokeStyle = CONFIG.COLORS.BULL_GOLD;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(selectedX - 55, charY - 50, 110, 120);
-      ctx.fillStyle = 'rgba(255,215,0,0.08)';
-      ctx.fillRect(selectedX - 55, charY - 50, 110, 120);
-
-      // Draw mini characters
-      this._drawMiniChad(ctx, chadX - 18, charY - 30);
-      this._drawMiniDiana(ctx, dianaX - 18, charY - 30);
-
-      // Names
-      ctx.fillStyle = this.hoverIndex === 0 ? CONFIG.COLORS.BULL_GOLD : '#AAA';
-      ctx.font = '16px sans-serif';
-      ctx.fillText('Chad Stocksworth', chadX, charY + 50);
-      ctx.fillStyle = '#777';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('[1] or LEFT', chadX, charY + 68);
-
-      ctx.fillStyle = this.hoverIndex === 1 ? CONFIG.COLORS.BULL_GOLD : '#AAA';
-      ctx.font = '16px sans-serif';
-      ctx.fillText('Diana Dividend', dianaX, charY + 50);
-      ctx.fillStyle = '#777';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('[2] or RIGHT', dianaX, charY + 68);
-
-      // Instruction
-      ctx.fillStyle = CONFIG.COLORS.WHITE;
-      ctx.font = '16px sans-serif';
-      const isMobileSelect = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-      ctx.fillText(isMobileSelect ? 'Tap to confirm' : 'Press ENTER to confirm', w / 2, h * 0.88);
+      // Confirm prompt (blinking)
+      if (Math.floor(this.animTime * 2) % 2 === 0) {
+        ctx.fillStyle = CONFIG.COLORS.WHITE;
+        ctx.font = '17px sans-serif';
+        ctx.fillText(isMobile ? 'Tap a side to choose and start' : 'Press ENTER to start', w / 2, 482);
+      }
     }
 
     // Loading tip at bottom
-    ctx.fillStyle = '#444';
+    ctx.fillStyle = '#50547a';
     ctx.font = 'italic 13px sans-serif';
-    ctx.fillText('"' + this.tips[this.tipIndex] + '"', w / 2, h * 0.95);
+    ctx.fillText('"' + this.tips[this.tipIndex] + '"', w / 2, h - 20);
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  _drawCharCard(ctx, x, y, idx, name, flavor, keyHint) {
+    const cw = 210, ch = 185;
+    const selected = this.hoverIndex === idx;
+
+    // Panel with glow when selected
+    ctx.save();
+    if (selected) {
+      ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+      ctx.shadowBlur = 18;
+    }
+    this._roundRect(ctx, x, y, cw, ch, 12);
+    ctx.fillStyle = selected ? 'rgba(30, 30, 66, 0.95)' : 'rgba(16, 16, 40, 0.9)';
+    ctx.fill();
+    ctx.restore();
+    this._roundRect(ctx, x, y, cw, ch, 12);
+    ctx.strokeStyle = selected ? CONFIG.COLORS.BULL_GOLD : '#3a3c5e';
+    ctx.lineWidth = selected ? 3 : 2;
+    ctx.stroke();
+
+    // Character sprite, scaled up (gentle bob when selected)
+    const scale = 1.6 + (selected ? Math.sin(this.animTime * 6) * 0.04 : 0);
+    const spriteW = 36 * scale;
+    ctx.save();
+    ctx.translate(x + cw / 2 - spriteW / 2, y + 14);
+    ctx.scale(scale, scale);
+    if (idx === 0) this._drawMiniChad(ctx, 0, 0);
+    else this._drawMiniDiana(ctx, 0, 0);
+    ctx.restore();
+
+    // Name / flavor / input hint
+    ctx.fillStyle = selected ? CONFIG.COLORS.BULL_GOLD : '#cccccc';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(name, x + cw / 2, y + 124);
+    ctx.fillStyle = '#8890b8';
+    ctx.font = 'italic 12px sans-serif';
+    ctx.fillText(flavor, x + cw / 2, y + 144);
+    ctx.fillStyle = selected ? '#c0a850' : '#555a7a';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(keyHint, x + cw / 2, y + 166);
   }
 
   _drawMiniChad(ctx, x, y) {
@@ -5938,6 +6429,8 @@ class BackgroundRenderer {
       this._initTradingFloor();
     } else if (this.theme === 'cryptoMines') {
       this._initCryptoMines();
+    } else if (this.theme === 'launchPad') {
+      this._initLaunchPad();
     }
   }
 
@@ -6117,7 +6610,217 @@ class BackgroundRenderer {
       this._renderTradingFloor(ctx, camera, canvasWidth, canvasHeight, time);
     } else if (this.theme === 'cryptoMines') {
       this._renderCryptoMines(ctx, camera, canvasWidth, canvasHeight, time);
+    } else if (this.theme === 'launchPad') {
+      this._renderLaunchPad(ctx, camera, canvasWidth, canvasHeight, time);
     }
+  }
+
+  // ==============================
+  //  Launch Pad (SpaceX IPO level)
+  // ==============================
+  _initLaunchPad() {
+    this.layers = [];
+    // Star field
+    this.stars = [];
+    for (let i = 0; i < 110; i++) {
+      this.stars.push({
+        x: Math.random() * 2200,
+        y: Math.random() * 340,
+        size: Math.random() * 2 + 0.5,
+        twinkle: Math.random() * Math.PI * 2
+      });
+    }
+    // Rockets launching on repeating cycles. Each has a horizontal world
+    // position (wrapped with parallax), a launch period, and a size.
+    this.rockets = [];
+    for (let i = 0; i < 14; i++) {
+      this.rockets.push({
+        x: 80 + i * 150 + Math.random() * 100,
+        size: 0.55 + Math.random() * 0.9,          // scale factor
+        period: 6 + Math.random() * 6,             // seconds per launch cycle
+        offset: Math.random() * 12,                // cycle phase offset
+        parallax: 0.15 + Math.random() * 0.3,
+        tint: Math.random() > 0.7 ? '#D8E8FF' : '#ECECF4'
+      });
+    }
+    // Launch gantry towers (two parallax layers)
+    this.towers = [];
+    for (let i = 0; i < 14; i++) {
+      this.towers.push({
+        x: i * 160 + Math.random() * 60,
+        w: 22 + Math.random() * 16,
+        h: 120 + Math.random() * 160,
+        parallax: i % 2 === 0 ? 0.3 : 0.5,
+        alpha: i % 2 === 0 ? 0.5 : 0.8,
+        hasDish: Math.random() > 0.6
+      });
+    }
+  }
+
+  _renderLaunchPad(ctx, camera, canvasWidth, canvasHeight, time) {
+    // Deep-space gradient with a purple horizon
+    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+    grad.addColorStop(0, '#020210');
+    grad.addColorStop(0.55, '#0a0a2a');
+    grad.addColorStop(1, '#251238');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // Stars
+    for (const star of this.stars) {
+      const sx = ((star.x - camera.x * 0.03) % (canvasWidth + 100));
+      ctx.globalAlpha = (Math.sin(time * 2 + star.twinkle) * 0.3 + 0.7) * 0.85;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(sx, star.y, star.size, star.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // Mars on the horizon (where we're all going, obviously)
+    const marsX = canvasWidth * 0.78 - camera.x * 0.015;
+    ctx.fillStyle = '#C1440E';
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(marsX, 80, 26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#8C2F08';
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.arc(marsX - 8, 72, 7, 0, Math.PI * 2);
+    ctx.arc(marsX + 10, 88, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#FF6633';
+    ctx.beginPath();
+    ctx.arc(marsX, 80, 38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Rockets mid-launch (behind the towers)
+    for (const r of this.rockets) {
+      const repeatW = 2200;
+      let rx = ((r.x - camera.x * r.parallax) % repeatW);
+      if (rx < -100) rx += repeatW;
+      if (rx > canvasWidth + 100) continue;
+
+      // Cycle: 0..0.15 sitting on pad, 0.15..1 ascending off the top.
+      // Exponent 1.6 keeps rockets visible mid-screen longer than a pure
+      // quadratic while still accelerating away convincingly.
+      const phase = ((time + r.offset) % r.period) / r.period;
+      const ascent = Math.max(0, (phase - 0.15) / 0.85);
+      const ry = canvasHeight - 60 - Math.pow(ascent, 1.6) * (canvasHeight + 260);
+      if (ry < -140) continue;
+
+      const s = r.size;
+      ctx.save();
+      ctx.translate(rx, ry);
+      ctx.scale(s, s);
+      // Exhaust flame + smoke once launched
+      if (ascent > 0) {
+        const flick = Math.abs(Math.sin(time * 30 + r.offset)) * 14;
+        ctx.fillStyle = '#FFA500';
+        ctx.beginPath();
+        ctx.moveTo(-7, 48);
+        ctx.lineTo(0, 78 + flick);
+        ctx.lineTo(7, 48);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#FFE066';
+        ctx.beginPath();
+        ctx.moveTo(-4, 48);
+        ctx.lineTo(0, 64 + flick * 0.6);
+        ctx.lineTo(4, 48);
+        ctx.closePath();
+        ctx.fill();
+        // Smoke puffs trailing below
+        ctx.fillStyle = 'rgba(200, 200, 220, 0.18)';
+        for (let p = 1; p <= 3; p++) {
+          ctx.beginPath();
+          ctx.arc((Math.sin(time * 4 + p * 2.1) * 6), 80 + p * 26, 10 + p * 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // Body
+      ctx.fillStyle = r.tint;
+      ctx.fillRect(-7, 0, 14, 48);
+      // Nose cone
+      ctx.fillStyle = '#FF4444';
+      ctx.beginPath();
+      ctx.moveTo(-7, 0);
+      ctx.lineTo(0, -16);
+      ctx.lineTo(7, 0);
+      ctx.closePath();
+      ctx.fill();
+      // Fins
+      ctx.fillStyle = '#FF4444';
+      ctx.beginPath();
+      ctx.moveTo(-7, 48);
+      ctx.lineTo(-13, 56);
+      ctx.lineTo(-7, 38);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(7, 48);
+      ctx.lineTo(13, 56);
+      ctx.lineTo(7, 38);
+      ctx.closePath();
+      ctx.fill();
+      // Porthole
+      ctx.fillStyle = '#4488FF';
+      ctx.beginPath();
+      ctx.arc(0, 14, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Launch gantry towers (silhouettes with blinking pad lights)
+    for (const t of this.towers) {
+      const repeatW = 2300;
+      let tx = ((t.x - camera.x * t.parallax) % repeatW);
+      if (tx < -100) tx += repeatW;
+      if (tx > canvasWidth + 100) continue;
+      const ty = canvasHeight - t.h;
+
+      ctx.globalAlpha = t.alpha;
+      ctx.fillStyle = '#101025';
+      ctx.fillRect(tx, ty, t.w, t.h);
+      // Cross bracing
+      ctx.strokeStyle = '#1c1c38';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let yy = ty; yy < canvasHeight - 20; yy += 26) {
+        ctx.moveTo(tx, yy);
+        ctx.lineTo(tx + t.w, yy + 26);
+        ctx.moveTo(tx + t.w, yy);
+        ctx.lineTo(tx, yy + 26);
+      }
+      ctx.stroke();
+      // Dish or beacon on top
+      if (t.hasDish) {
+        ctx.fillStyle = '#181830';
+        ctx.beginPath();
+        ctx.arc(tx + t.w / 2, ty - 6, 9, Math.PI, Math.PI * 2);
+        ctx.fill();
+      }
+      if (Math.sin(time * 3 + t.x) > 0.4) {
+        ctx.fillStyle = '#FF3333';
+        ctx.beginPath();
+        ctx.arc(tx + t.w / 2, ty - (t.hasDish ? 16 : 3), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Launch pad lights along the ground line
+    ctx.fillStyle = '#FFD700';
+    for (let i = 0; i < 24; i++) {
+      const lx = ((i * 90 - camera.x * 0.6) % (canvasWidth + 180));
+      const blink = Math.sin(time * 5 + i * 1.3) > -0.3;
+      if (blink && lx > -10) {
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(lx, canvasHeight - 8, 4, 4);
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // ==============================
@@ -6607,6 +7310,13 @@ class AudioManager {
     const notes = [400, 500, 600, 700, 800, 1000, 1200];
     notes.forEach((freq, i) => {
       this._playTone(freq, 0.08, 'sine', 0.1, i * 0.05);
+    });
+  }
+
+  playCheckpoint() {
+    const notes = [523, 659, 784];
+    notes.forEach((freq, i) => {
+      this._playTone(freq, 0.12, 'triangle', 0.12, i * 0.08);
     });
   }
 
@@ -7218,8 +7928,10 @@ let hud = null;
 let background = new BackgroundRenderer();
 
 let levelTime = 0;
+let totalRunTime = 0; // accumulates across levels for leaderboard submission
 let gameTime = 0;
 let debugMode = false;
+let runDustTimer = 0;
 
 // Death/respawn state
 let deathPauseTimer = 0;
@@ -7264,7 +7976,7 @@ function getScale() {
 // ==========================================
 function startGame(characterType, levelIndex) {
   currentLevelIndex = levelIndex || 0;
-  const LEVELS = [LEVEL_1, LEVEL_2, LEVEL_3];
+  const LEVELS = [LEVEL_SPACEX, LEVEL_1, LEVEL_2, LEVEL_3];
   const levelData = LEVELS[currentLevelIndex];
   level = loadLevel(levelData);
   player = new Player(levelData.playerStart.x, levelData.playerStart.y, characterType);
@@ -7274,6 +7986,7 @@ function startGame(characterType, levelIndex) {
   background = new BackgroundRenderer(levelData.theme || 'nightCity');
   hud = new HUD(level.tickerStocks);
   levelTime = 0;
+  totalRunTime = 0;
   deathPauseTimer = 0;
   marginCallShown = false;
   leaderboardPending = false;
@@ -7373,7 +8086,7 @@ function updatePlaying(dt) {
         gameOverScreen.finalScore = player.score;
         gameOverScreen.bullsCollected = player.totalBullsCollected;
         currentState = GameState.GAME_OVER;
-        triggerLeaderboard(player.score, player.totalBullsCollected, levelTime, player.characterType);
+        triggerLeaderboard(player.score, player.totalBullsCollected, totalRunTime, player.characterType);
       } else {
         player.respawn();
         camera.x = Math.max(0, player.x - CONFIG.VIRTUAL_WIDTH / 2);
@@ -7386,6 +8099,7 @@ function updatePlaying(dt) {
   }
 
   levelTime += dt;
+  totalRunTime += dt;
 
   // Update flash crash timer (death effect)
   if (flashCrashTimer > 0) {
@@ -7415,6 +8129,18 @@ function updatePlaying(dt) {
   // Update player
   player.update(dt, input, level.solids);
 
+  // Landing and running dust
+  if (player.landedThisFrame && player.landingImpact > 350) {
+    particles.dust(player.x + player.width / 2, player.y + player.height,
+      Math.min(12, Math.round(player.landingImpact / 90)));
+  }
+  runDustTimer += dt;
+  if (player.onGround && Math.abs(player.vx) > 200 && runDustTimer > 0.18) {
+    runDustTimer = 0;
+    particles.dust(player.x + (player.facingRight ? 6 : player.width - 6),
+      player.y + player.height - 2, 2);
+  }
+
   // Grizzly stomp combo: reset if player touches ground
   if (grizzlyComboTarget && player.onGround) {
     if (grizzlyComboTarget.alive) {
@@ -7437,9 +8163,19 @@ function updatePlaying(dt) {
     block.update(dt);
   }
 
-  // Update enemies
+  // Update enemies — only once they come within ~1.5 screens of the camera,
+  // so distant enemies hold their patrol positions until the player approaches
+  const enemyWakeLeft = camera.x - CONFIG.VIRTUAL_WIDTH * 0.5;
+  const enemyWakeRight = camera.x + CONFIG.VIRTUAL_WIDTH * 1.5;
   for (let i = level.enemies.length - 1; i >= 0; i--) {
     const enemy = level.enemies[i];
+    if (!enemy.awake) {
+      if (enemy.x + enemy.width > enemyWakeLeft && enemy.x < enemyWakeRight) {
+        enemy.awake = true;
+      } else {
+        continue;
+      }
+    }
     const keepAlive = enemy instanceof GrizzlyBear
       ? enemy.update(dt, level.solids, player.x)
       : enemy.update(dt, level.solids);
@@ -7576,6 +8312,19 @@ function updatePlaying(dt) {
       audio.playSuperJump();
       floatingText.spawn(pad.x + pad.width / 2, pad.y - 20, 'SHORT SQUEEZE!', '#00FF88', 20, 1.5);
       particles.powerUp(pad.x + pad.width / 2, pad.y, '#00FF88');
+    }
+  }
+
+  // Checkpoints — touching one moves the respawn point
+  for (const cp of level.checkpoints) {
+    cp.update(dt);
+    if (!cp.activated && !player.deathAnimating && aabbOverlap(player, cp)) {
+      cp.activate();
+      player.spawnX = cp.x + cp.width / 2 - CONFIG.PLAYER_WIDTH / 2;
+      player.spawnY = cp.y + cp.height - CONFIG.PLAYER_HEIGHT - 2;
+      audio.playCheckpoint();
+      floatingText.spawn(cp.x + cp.width / 2, cp.y - 16, 'CHECKPOINT!', '#00FF88', 22, 2.0);
+      particles.powerUp(cp.x + cp.width / 2, cp.y + cp.height / 2, '#00FF88');
     }
   }
 
@@ -7931,7 +8680,7 @@ function updateLevelComplete(dt) {
   if (leaderboardPending) return;
   if ((input.wasPressed('Enter') || input.wasPressed('Space')) && levelCompleteScreen.animTime > 2.5) {
     currentLevelIndex++;
-    const LEVELS = [LEVEL_1, LEVEL_2, LEVEL_3];
+    const LEVELS = [LEVEL_SPACEX, LEVEL_1, LEVEL_2, LEVEL_3];
     if (currentLevelIndex < LEVELS.length) {
       // Advance to next level — keep score, lives, totalBulls
       const levelData = LEVELS[currentLevelIndex];
@@ -7982,7 +8731,7 @@ function updateLevelComplete(dt) {
     } else {
       // All levels complete! Submit final score to leaderboard before returning to title
       if (!leaderboard.submittedThisSession) {
-        triggerLeaderboard(player.score, player.totalBullsCollected, levelTime, player.characterType);
+        triggerLeaderboard(player.score, player.totalBullsCollected, totalRunTime, player.characterType);
         // Stay on level complete screen until leaderboard resolves
         if (leaderboardPending) return;
       }
@@ -8039,6 +8788,73 @@ function render() {
   touchControls.render(ctx, canvas.width, canvas.height, currentState);
 }
 
+// Neon meme billboard on a pole (decorative, behind gameplay)
+function renderMemeSign(ctx, camera, sign, time) {
+  const sx = sign.x - camera.x;
+  if (sx < -240 || sx > CONFIG.VIRTUAL_WIDTH + 240) return;
+
+  const groundY = 432 - camera.y;
+  const signY = groundY - (sign.h || 150); // panel top
+  const color = sign.color || '#00FF88';
+
+  ctx.font = 'bold ' + (sign.size || 20) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const textW = ctx.measureText(sign.text).width;
+  const panelW = textW + 36;
+  const panelH = (sign.size || 20) + 26;
+
+  // Pole
+  ctx.fillStyle = '#2a2a48';
+  ctx.fillRect(sx - 3, signY + panelH, 6, groundY - signY - panelH);
+
+  // Panel
+  ctx.fillStyle = 'rgba(8, 8, 24, 0.92)';
+  ctx.fillRect(sx - panelW / 2, signY, panelW, panelH);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.5 + Math.sin(time * 3 + sign.x) * 0.2;
+  ctx.strokeRect(sx - panelW / 2, signY, panelW, panelH);
+  ctx.globalAlpha = 1;
+
+  // Neon text with glow (flickers occasionally, like any honest neon sign)
+  const flicker = Math.sin(time * 13 + sign.x * 0.7) > -0.92 ? 1 : 0.4;
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12 * flicker;
+  ctx.globalAlpha = flicker;
+  ctx.fillStyle = color;
+  ctx.fillText(sign.text, sx, signY + panelH / 2 + 1);
+  ctx.restore();
+}
+
+// Soft ground shadow under an entity (only drawn while it stands on something)
+function renderEntityShadow(ctx, camera, e) {
+  if (!e.onGround || e.alive === false) return;
+  const sx = e.x - camera.x + e.width / 2;
+  const sy = e.y + e.height - camera.y + 2;
+  ctx.globalAlpha = 0.22;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, e.width * 0.45, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// Subtle vignette for depth (cached gradient)
+let vignetteGradient = null;
+function renderVignette(ctx) {
+  const w = CONFIG.VIRTUAL_WIDTH;
+  const h = CONFIG.VIRTUAL_HEIGHT;
+  if (!vignetteGradient) {
+    vignetteGradient = ctx.createRadialGradient(w / 2, h / 2, h * 0.5, w / 2, h / 2, w * 0.72);
+    vignetteGradient.addColorStop(0, 'rgba(0,0,0,0)');
+    vignetteGradient.addColorStop(1, 'rgba(0,0,0,0.32)');
+  }
+  ctx.fillStyle = vignetteGradient;
+  ctx.fillRect(0, 0, w, h);
+}
+
 function renderPlaying() {
   if (marketCrashActive) {
     ctx.save();
@@ -8052,6 +8868,11 @@ function renderPlaying() {
   ctx.fillStyle = CONFIG.COLORS.PIT_VOID;
   ctx.fillRect(0, 432 - camera.y, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
 
+  // Meme billboards (decorative, behind level geometry)
+  for (const sign of level.memeSigns) {
+    renderMemeSign(ctx, camera, sign, gameTime);
+  }
+
   // Level geometry - only render visible solids
   const viewLeft = camera.x - 100;
   const viewRight = camera.x + CONFIG.VIRTUAL_WIDTH + 100;
@@ -8064,8 +8885,15 @@ function renderPlaying() {
   // Moving platforms
   if (level.movingPlatforms) {
     for (const mp of level.movingPlatforms) {
-      mp.render(ctx, camera);
+      if (mp.x + mp.width > viewLeft && mp.x < viewRight) {
+        mp.render(ctx, camera);
+      }
     }
+  }
+
+  // Checkpoints
+  for (const cp of level.checkpoints) {
+    cp.render(ctx, camera);
   }
 
   // Golden Briefcase (goal)
@@ -8073,25 +8901,36 @@ function renderPlaying() {
 
   // Short Squeeze pads
   for (const pad of level.shortSqueezePads) {
-    pad.render(ctx, camera);
+    if (pad.x + pad.width > viewLeft && pad.x < viewRight) {
+      pad.render(ctx, camera);
+    }
   }
 
   // Collectibles
   for (const c of level.collectibles) {
-    c.render(ctx, camera);
+    if (c.x + c.width > viewLeft && c.x < viewRight) {
+      c.render(ctx, camera);
+    }
   }
 
   // Enemies
   for (const e of level.enemies) {
-    e.render(ctx, camera);
+    if (e.x + e.width > viewLeft && e.x < viewRight) {
+      renderEntityShadow(ctx, camera, e);
+      e.render(ctx, camera);
+    }
   }
 
   // Boss
   if (level.boss) {
+    renderEntityShadow(ctx, camera, level.boss);
     level.boss.render(ctx, camera);
   }
 
   // Player
+  if (!player.deathAnimating) {
+    renderEntityShadow(ctx, camera, player);
+  }
   player.render(ctx, camera);
 
   // Particles and floating text
@@ -8120,6 +8959,8 @@ function renderPlaying() {
     ctx.fillRect(0, 0, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
     ctx.globalAlpha = 1;
   }
+
+  renderVignette(ctx);
 
   // HUD (screen space)
   hud.render(ctx, player, CONFIG.VIRTUAL_WIDTH);
@@ -8190,35 +9031,90 @@ function renderDebug() {
 // ==========================================
 //  Live Stock Ticker (Dow 30)
 // ==========================================
-async function fetchLiveStockData() {
-  const DOW30 = ['AAPL','MSFT','AMGN','AXP','BA','CAT','CRM','CSCO','CVX','DIS',
-    'GS','HD','HON','IBM','JNJ','JPM','KO','MCD','MMM','MRK',
-    'NKE','PG','TRV','UNH','V','VZ','WBA','WMT','DOW','INTC'];
+// Symbols shown in the live ticker. SPCX (SpaceX) is included so it goes
+// live automatically once the feeds list it; until then it's pinned below.
+const TICKER_SYMBOLS = ['SPCX','AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META',
+  'JPM','V','DIS','BA','KO','GS','NFLX','AMD'];
 
-  try {
-    // Try Yahoo Finance via CORS proxy
-    const symbols = DOW30.join(',');
-    const url = 'https://api.allorigins.win/get?url=' +
-      encodeURIComponent('https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + symbols + '&fields=symbol,regularMarketPrice,regularMarketChangePercent');
+// SpaceX listed on Nasdaq 2026-06-12: closed $160.95, +19% on debut. Used as a
+// pin (feeds may lag a brand-new symbol) and as the hardcoded last resort.
+const SPCX_FALLBACK = { symbol: 'SPCX', price: 160.95, change: 19.2 };
 
-    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    const json = await resp.json();
-    const data = JSON.parse(json.contents);
+// Public CORS relays, tried in order. Free stock endpoints don't send CORS
+// headers, so the browser needs a proxy; redundancy is what buys reliability.
+const CORS_PROXIES = [
+  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  u => 'https://thingproxy.freeboard.io/fetch/' + u,
+];
 
-    if (data.quoteResponse && data.quoteResponse.result) {
-      const stocks = data.quoteResponse.result.map(q => ({
-        symbol: q.symbol,
-        price: q.regularMarketPrice || 0,
-        change: q.regularMarketChangePercent || 0
-      }));
-      if (stocks.length > 10) {
-        return stocks;
+async function proxiedFetch(url, timeoutMs = 6000) {
+  for (const wrap of CORS_PROXIES) {
+    try {
+      const resp = await fetch(wrap(url), { signal: AbortSignal.timeout(timeoutMs) });
+      if (resp.ok) {
+        const text = await resp.text();
+        if (text && text.length > 2) return text;
       }
-    }
-  } catch (e) {
-    console.warn('Live stock data unavailable, using fallback:', e.message);
+    } catch (e) { /* try the next proxy */ }
   }
-  return null; // Use fallback data from level
+  throw new Error('all proxies failed for ' + url);
+}
+
+function cleanQuote(symbol, price, change) {
+  return {
+    symbol,
+    price: Math.round(price * 100) / 100,
+    change: Math.round((change || 0) * 100) / 100,
+  };
+}
+
+// Source 1 — Yahoo v8 chart (no auth/crumb needed, unlike the old v7 quote).
+// One symbol per request, fired in parallel; gives price AND previous close,
+// so the % change is accurate. Partial success is fine.
+async function fetchFromYahoo(symbols) {
+  const settled = await Promise.allSettled(symbols.map(async sym => {
+    const text = await proxiedFetch(
+      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d');
+    const meta = JSON.parse(text).chart.result[0].meta;
+    const price = meta.regularMarketPrice;
+    const prev = meta.chartPreviousClose ?? meta.previousClose;
+    if (!isFinite(price) || price <= 0) throw new Error('no price for ' + sym);
+    return cleanQuote(sym, price, prev ? ((price - prev) / prev) * 100 : 0);
+  }));
+  return settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+}
+
+// Source 2 — Stooq batch CSV (free, no key, all symbols in one request).
+// Change here is intraday (close vs open) since the light feed omits prev close.
+async function fetchFromStooq(symbols) {
+  const list = symbols.map(s => s.toLowerCase() + '.us').join('+');
+  const text = await proxiedFetch(
+    'https://stooq.com/q/l/?s=' + list + '&f=sd2t2ohlcv&h&e=csv');
+  const out = [];
+  for (const line of text.trim().split('\n').slice(1)) {
+    const [sym, , , open, , , close] = line.split(',');
+    const price = parseFloat(close), o = parseFloat(open);
+    if (!sym || !isFinite(price) || price <= 0) continue;
+    out.push(cleanQuote(sym.replace(/\.us$/i, '').toUpperCase(), price, o ? ((price - o) / o) * 100 : 0));
+  }
+  return out;
+}
+
+async function fetchLiveStockData() {
+  const need = Math.ceil(TICKER_SYMBOLS.length / 2); // accept partial coverage
+  for (const source of [fetchFromYahoo, fetchFromStooq]) {
+    try {
+      const quotes = await source(TICKER_SYMBOLS);
+      if (quotes.length >= need) {
+        if (!quotes.some(q => q.symbol === 'SPCX')) quotes.unshift({ ...SPCX_FALLBACK });
+        return quotes;
+      }
+    } catch (e) {
+      console.warn('Live ticker source failed:', e.message);
+    }
+  }
+  return null; // every source failed — fall back to the level's hardcoded list
 }
 
 // Try to load live data on page load
@@ -8345,11 +9241,11 @@ requestAnimationFrame(gameLoop);
           extras.nearPit = !player.onGround && player.vy > 0;
         }
 
-        // Get current actions from input
-        const actionLeft  = !!(input.keys && (input.keys['ArrowLeft'] || input.keys['a']));
-        const actionRight = !!(input.keys && (input.keys['ArrowRight'] || input.keys['d']));
-        const actionJump  = !!(input.keys && (input.keys['Space'] || input.keys['ArrowUp'] || input.keys['w']));
-        const actionDown  = !!(input.keys && (input.keys['ArrowDown'] || input.keys['s']));
+        // Get current actions from input (getters cover arrows, WASD, and touch)
+        const actionLeft  = input.left;
+        const actionRight = input.right;
+        const actionJump  = input.jumpHeld;
+        const actionDown  = input.down;
 
         ReplayLib.recordFrame(px, py, idx, extras, actionLeft, actionRight, actionJump, actionDown);
       }
