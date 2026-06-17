@@ -825,6 +825,17 @@ class ParticleSystem {
     });
   }
 
+  rocketBoost(x, y) {
+    // Fiery exhaust sparks shooting downward from the player's feet.
+    this.emit(x, y, 5, {
+      speed: 100,
+      upwardBias: -180, // negative bias => particles are flung downward
+      colors: ['#FFFFFF', '#FFDD33', '#FF8800', '#FF4400'],
+      life: 0.4,
+      size: 7
+    });
+  }
+
   dust(x, y, count) {
     this.emit(x, y, count || 6, {
       speed: 70,
@@ -1233,8 +1244,9 @@ class ShortSqueezePad {
         player.x + player.width > this.x &&
         player.x < this.x + this.width &&
         feet >= this.y - 8 && feet <= this.y + this.height + 8) {
-      player.vy = CONFIG.PLAYER_SUPER_JUMP_VELOCITY * 1.3;
+      player.vy = CONFIG.PLAYER_SUPER_JUMP_VELOCITY * 1.5;
       player.onGround = false;
+      player.rocketBoostTimer = 0.7; // drives the rocket-flame effect on the player
       this.cooldown = 0.5;
       this.activated = true;
       this.activateTimer = 0.4;
@@ -3278,6 +3290,9 @@ class Player {
     // Moving platform velocity transfer (set by main.js each frame)
     this._platformVx = 0;
     this._platformVy = 0;
+
+    // Rocket-launch boost from a Short Squeeze pad (>0 while flames show)
+    this.rocketBoostTimer = 0;
   }
 
   _getStandingHeight() {
@@ -3442,6 +3457,10 @@ class Player {
     if (this.damageInvTimer > 0) {
       this.damageInvTimer -= dt;
     }
+    // Rocket boost flames fade out shortly after launch
+    if (this.rocketBoostTimer > 0) {
+      this.rocketBoostTimer -= dt;
+    }
 
     // === ANIMATION STATE ===
     this.animTime += dt;
@@ -3575,6 +3594,45 @@ class Player {
     const screenY = this.y - camera.y;
 
     ctx.save();
+
+    // Rocket-launch flames from a Short Squeeze pad — a fiery exhaust plume
+    // shooting down from the character's feet while boosting upward.
+    if (this.rocketBoostTimer > 0) {
+      const feetX = screenX + this.width / 2;
+      const feetY = screenY + this.height;
+      const flick = Math.sin(this.animTime * 45);
+      const len = this.height * (0.8 + this.rocketBoostTimer * 0.6) + flick * 6;
+      const halfW = this.width * 0.42;
+
+      // Outer flame (orange)
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#FF6600';
+      ctx.beginPath();
+      ctx.moveTo(feetX - halfW, feetY - 2);
+      ctx.lineTo(feetX + halfW, feetY - 2);
+      ctx.lineTo(feetX + flick * 4, feetY + len);
+      ctx.closePath();
+      ctx.fill();
+
+      // Inner flame (yellow)
+      ctx.fillStyle = '#FFDD33';
+      ctx.beginPath();
+      ctx.moveTo(feetX - halfW * 0.55, feetY - 2);
+      ctx.lineTo(feetX + halfW * 0.55, feetY - 2);
+      ctx.lineTo(feetX - flick * 3, feetY + len * 0.62);
+      ctx.closePath();
+      ctx.fill();
+
+      // White-hot core
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.moveTo(feetX - halfW * 0.25, feetY - 2);
+      ctx.lineTo(feetX + halfW * 0.25, feetY - 2);
+      ctx.lineTo(feetX, feetY + len * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
 
     // Diamond Hands invincibility glow
     if (this.diamondHands) {
@@ -8145,6 +8203,11 @@ function updatePlaying(dt) {
     runDustTimer = 0;
     particles.dust(player.x + (player.facingRight ? 6 : player.width - 6),
       player.y + player.height - 2, 2);
+  }
+
+  // Rocket exhaust sparks while launching off a Short Squeeze pad
+  if (player.rocketBoostTimer > 0) {
+    particles.rocketBoost(player.x + player.width / 2, player.y + player.height);
   }
 
   // Grizzly stomp combo: reset if player touches ground
