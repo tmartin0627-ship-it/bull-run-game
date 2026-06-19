@@ -1148,34 +1148,48 @@ class FloatingText {
     this.texts.push({
       x: x, y: y, text: text, color: color,
       size: size, duration: duration, maxDuration: duration,
-      vy: -80, scale: 1.5
+      vy: -80, age: 0
     });
   }
 
   update(dt) {
     for (const t of this.texts) {
       t.y += t.vy * dt;
+      t.vy *= Math.max(0, 1 - 1.5 * dt); // ease the rise so it settles
       t.duration -= dt;
-      t.scale = Math.max(1.0, t.scale - dt * 2);
+      t.age += dt;
     }
     this.texts = this.texts.filter(t => t.duration > 0);
   }
 
   render(ctx, camera) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     for (const t of this.texts) {
+      // Pop in (overshoot then settle), fade out near the end.
+      const pop = t.age < 0.12 ? 1.6 - (t.age / 0.12) * 0.6 : 1.0;
       const alpha = Math.min(1, t.duration / (t.maxDuration * 0.3));
+      const px = t.x - camera.x;
+      const py = t.y - camera.y;
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = t.color;
-      ctx.font = 'bold ' + Math.round(t.size * t.scale) + 'px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      ctx.font = 'bold ' + Math.round(t.size * pop) + 'px sans-serif';
 
-      // Shadow
+      // Drop shadow
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillText(t.text, t.x - camera.x + 2, t.y - camera.y + 2);
+      ctx.fillText(t.text, px + 2, py + 2);
 
-      ctx.fillStyle = t.color;
-      ctx.fillText(t.text, t.x - camera.x, t.y - camera.y);
+      // Glow for the bigger callouts only (cheap to keep).
+      if (t.size >= 22 && FX.quality === 'high') {
+        ctx.save();
+        ctx.shadowColor = t.color;
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.text, px, py);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.text, px, py);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1360,6 +1374,22 @@ class Platform {
         ctx.closePath();
         ctx.fill();
         break;
+      }
+    }
+
+    // Shared edge lighting: a lit top highlight + a 1px ambient-occlusion
+    // line at the base. Turns flat slabs into surfaces with depth.
+    if (this.type !== 'rocket') {
+      FX.rimLight(ctx, sx, sy, this.width, this.height);
+    }
+    // Additive accent bloom for the "glowy" tech platforms.
+    if (FX.quality === 'high') {
+      if (this.type === 'crystal') {
+        FX.glow(ctx, sx + this.width / 2, sy + 2, this.width * 0.55, '#cc44ff', 0.3);
+      } else if (this.type === 'server') {
+        FX.glow(ctx, sx + this.width / 2, sy + 7, Math.min(40, this.width * 0.5), '#00FFCC', 0.14);
+      } else if (this.type === 'terminal') {
+        FX.glow(ctx, sx + this.width / 2, sy - 10, this.width * 0.4, '#00FF88', 0.16);
       }
     }
   }
@@ -3982,6 +4012,11 @@ class Player {
         const stretch = Math.min(Math.abs(this.vy) / 900, 1) * 0.1;
         squashY = 1 + stretch;
         squashX = 1 - stretch * 0.6;
+      } else if (this.state === 'idle') {
+        // Subtle idle breathing.
+        const breathe = Math.sin(this.animTime * 3) * 0.02;
+        squashY = 1 + breathe;
+        squashX = 1 - breathe * 0.5;
       }
       if (squashX !== 1 || squashY !== 1) {
         const pivotX = screenX + this.width / 2;
@@ -5823,11 +5858,13 @@ class HUD {
 
   render(ctx, player, canvasWidth) {
     // Stock ticker bar at very top
-    ctx.fillStyle = CONFIG.COLORS.TICKER_BG;
+    ctx.fillStyle = FX.gradient(ctx, 'hud:ticker', 0, 0, 0, 24, [
+      [0, 'rgba(10,10,24,0.92)'], [1, 'rgba(0,0,0,0.85)']
+    ]);
     ctx.fillRect(0, 0, canvasWidth, 24);
 
     // Ticker border
-    ctx.fillStyle = 'rgba(255,215,0,0.3)';
+    ctx.fillStyle = 'rgba(255,215,0,0.35)';
     ctx.fillRect(0, 23, canvasWidth, 1);
 
     ctx.font = 'bold 13px monospace';
@@ -5875,19 +5912,28 @@ class HUD {
     const panelW = 200;
     const panelH = 68;
 
-    ctx.fillStyle = CONFIG.COLORS.HUD_BG;
-    ctx.fillRect(panelX, panelY, panelW, panelH);
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    FX.roundRect(ctx, panelX, panelY, panelW, panelH, 8);
+    ctx.fillStyle = FX.gradient(ctx, 'hud:panel', 0, panelY, 0, panelY + panelH, [
+      [0, 'rgba(18,18,40,0.82)'], [1, 'rgba(6,6,18,0.82)']
+    ]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,215,0,0.28)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(panelX, panelY, panelW, panelH);
+    ctx.stroke();
+    // Gold accent strip down the left edge.
+    ctx.fillStyle = 'rgba(255,215,0,0.55)';
+    ctx.fillRect(panelX + 2, panelY + 6, 2, panelH - 12);
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
 
-    // Score
+    // Score (with a soft gold glow)
+    ctx.save();
+    if (FX.quality === 'high') { ctx.shadowColor = CONFIG.COLORS.BULL_GOLD; ctx.shadowBlur = 8; }
     ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
     ctx.font = 'bold 15px monospace';
-    ctx.fillText('$' + player.score.toLocaleString(), panelX + 8, panelY + 6);
+    ctx.fillText('$' + player.score.toLocaleString(), panelX + 10, panelY + 6);
+    ctx.restore();
 
     // Lives
     ctx.fillStyle = CONFIG.COLORS.WHITE;
