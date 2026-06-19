@@ -1631,13 +1631,9 @@ class GoldBull {
     const w = this.width;
     const h = this.height;
 
-    // Glow effect
-    ctx.globalAlpha = 0.2 + Math.sin(this.animTime * 5) * 0.1;
-    ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
-    ctx.beginPath();
-    ctx.arc(sx + w / 2, sy + h / 2, w * 0.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Additive glow halo (cheap bloom)
+    FX.glow(ctx, sx + w / 2, sy + h / 2, w * 1.1, CONFIG.COLORS.BULL_GOLD,
+      0.3 + Math.sin(this.animTime * 5) * 0.12);
 
     // Body
     ctx.fillStyle = CONFIG.COLORS.BULL_BODY;
@@ -1735,13 +1731,9 @@ class GreenCandle {
     const sy = this.y - camera.y;
     if (sx + this.width < -10 || sx > CONFIG.VIRTUAL_WIDTH + 10) return;
 
-    // Glow
-    ctx.globalAlpha = 0.2;
-    ctx.fillStyle = CONFIG.COLORS.GREEN_CANDLE;
-    ctx.beginPath();
-    ctx.arc(sx + 12, sy + 20, 20, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Additive glow
+    FX.glow(ctx, sx + 12, sy + 20, 28, CONFIG.COLORS.GREEN_CANDLE,
+      0.3 + Math.sin(this.animTime * 5) * 0.12);
 
     // Candle body (stock chart candle shape)
     ctx.fillStyle = CONFIG.COLORS.GREEN_CANDLE;
@@ -1915,13 +1907,8 @@ class DividendCoin {
     const cx = sx + w / 2;
     const cy = sy + h / 2;
 
-    // Bright glow
-    ctx.globalAlpha = 0.3 + Math.sin(this.animTime * 6) * 0.15;
-    ctx.fillStyle = '#00FF88';
-    ctx.beginPath();
-    ctx.arc(cx, cy, w * 0.8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Bright additive glow
+    FX.glow(ctx, cx, cy, w * 1.4, '#00FF88', 0.4 + Math.sin(this.animTime * 6) * 0.18);
 
     // Coin body
     ctx.fillStyle = '#00CC66';
@@ -2073,13 +2060,8 @@ class RunningDiamond {
     const cy = sy + this.height / 2;
     const s = this.width * 0.5;
 
-    // Bright glow
-    ctx.globalAlpha = 0.35 + Math.sin(this.animTime * 8) * 0.15;
-    ctx.fillStyle = '#88DDFF';
-    ctx.beginPath();
-    ctx.arc(cx, cy, s * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Bright additive glow
+    FX.glow(ctx, cx, cy, s * 2.6, '#88DDFF', 0.45 + Math.sin(this.animTime * 8) * 0.2);
 
     // Diamond shape
     ctx.fillStyle = '#AAEEFF';
@@ -7005,10 +6987,9 @@ class BackgroundRenderer {
 
   _renderLaunchPad(ctx, camera, canvasWidth, canvasHeight, time) {
     // Deep-space gradient with a purple horizon
-    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
-    grad.addColorStop(0, '#020210');
-    grad.addColorStop(0.55, '#0a0a2a');
-    grad.addColorStop(1, '#251238');
+    const grad = FX.gradient(ctx, 'sky:launchPad', 0, 0, 0, canvasHeight, [
+      [0, '#020210'], [0.55, '#0a0a2a'], [1, '#251238']
+    ]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -7174,10 +7155,9 @@ class BackgroundRenderer {
   // ==============================
   _renderNightCity(ctx, camera, canvasWidth, canvasHeight, time) {
     // Sky gradient
-    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
-    grad.addColorStop(0, CONFIG.COLORS.SKY_TOP);
-    grad.addColorStop(0.5, CONFIG.COLORS.SKY_MID);
-    grad.addColorStop(1, CONFIG.COLORS.SKY_BOTTOM);
+    const grad = FX.gradient(ctx, 'sky:nightCity', 0, 0, 0, canvasHeight, [
+      [0, CONFIG.COLORS.SKY_TOP], [0.5, CONFIG.COLORS.SKY_MID], [1, CONFIG.COLORS.SKY_BOTTOM]
+    ]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -7269,10 +7249,9 @@ class BackgroundRenderer {
   // ==============================
   _renderTradingFloor(ctx, camera, canvasWidth, canvasHeight, time) {
     // Warm amber sky gradient (indoor ceiling)
-    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
-    grad.addColorStop(0, '#2a1a00');
-    grad.addColorStop(0.5, '#3a2a10');
-    grad.addColorStop(1, '#4a3a20');
+    const grad = FX.gradient(ctx, 'sky:tradingFloor', 0, 0, 0, canvasHeight, [
+      [0, '#2a1a00'], [0.5, '#3a2a10'], [1, '#4a3a20']
+    ]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -7377,10 +7356,9 @@ class BackgroundRenderer {
   // ==============================
   _renderCryptoMines(ctx, camera, canvasWidth, canvasHeight, time) {
     // Deep purple underground gradient
-    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
-    grad.addColorStop(0, '#0a0020');
-    grad.addColorStop(0.5, '#150030');
-    grad.addColorStop(1, '#0a0a2a');
+    const grad = FX.gradient(ctx, 'sky:cryptoMines', 0, 0, 0, canvasHeight, [
+      [0, '#0a0020'], [0.5, '#150030'], [1, '#0a0a2a']
+    ]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -7511,14 +7489,9 @@ function renderGoldenBriefcase(ctx, camera, pos, time) {
   const sx = pos.x - camera.x;
   const sy = pos.y - camera.y;
 
-  // Glow pulse
-  const glowSize = 40 + Math.sin(time * 3) * 8;
-  ctx.globalAlpha = 0.2 + Math.sin(time * 3) * 0.1;
-  ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
-  ctx.beginPath();
-  ctx.arc(sx + 24, sy + 20, glowSize, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
+  // Glow pulse (additive bloom)
+  const glowSize = 60 + Math.sin(time * 3) * 12;
+  FX.glow(ctx, sx + 24, sy + 20, glowSize, CONFIG.COLORS.BULL_GOLD, 0.35 + Math.sin(time * 3) * 0.12);
 
   // Rays of light
   ctx.strokeStyle = 'rgba(255,215,0,0.3)';
@@ -9209,6 +9182,10 @@ function renderMemeSign(ctx, camera, sign, time) {
 
   // Neon text with glow (flickers occasionally, like any honest neon sign)
   const flicker = Math.sin(time * 13 + sign.x * 0.7) > -0.92 ? 1 : 0.4;
+  // Soft additive halo behind the panel.
+  if (FX.quality === 'high') {
+    FX.glow(ctx, sx, signY + panelH / 2, panelW * 0.7, color, 0.18 * flicker);
+  }
   ctx.save();
   ctx.shadowColor = color;
   ctx.shadowBlur = 12 * flicker;
@@ -9258,6 +9235,13 @@ function renderPlaying() {
 
   // Background (parallax)
   background.render(ctx, camera, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT, gameTime);
+
+  // Atmospheric horizon haze for depth (subtle, theme-neutral)
+  const haze = FX.gradient(ctx, 'haze', 0, 250, 0, 432, [
+    [0, 'rgba(200,210,255,0)'], [1, 'rgba(200,210,255,0.07)']
+  ]);
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, 250, CONFIG.VIRTUAL_WIDTH, 182);
 
   // Pit voids (draw dark areas where there's no ground)
   ctx.fillStyle = CONFIG.COLORS.PIT_VOID;
