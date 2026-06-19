@@ -176,6 +176,189 @@ const CONFIG = {
 };
   </script>
   <script>
+// ==========================================
+//  FX — shared visual-effects helper layer
+// ==========================================
+// Stateless canvas utilities (rounded panels, cached gradients, additive
+// glow, soft shadows, rim light, glow text) plus small stateful singletons
+// for game feel (screen shake, hit-stop, full-screen flash). This generalizes
+// patterns that were previously one-off (vignette, entity shadows, the
+// market-crash shake) so every render method can opt into richer lighting and
+// juice cheaply. Performance rules: never build a gradient in a hot path
+// (use the cache), keep additive draws batched, and drop the expensive bits on
+// the 'low' quality tier (touch / slow devices).
+const FX = {
+  quality: 'high', // 'high' | 'low'
+
+  initQuality() {
+    const touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    this.quality = touch ? 'low' : 'high';
+  },
+
+  // ---- cached gradients ------------------------------------------------
+  // Gradients are expensive to build; create each once and reuse. Coordinates
+  // are baked in on first build, so callers that draw moving objects should
+  // build the gradient in LOCAL space (0..h) and translate before filling.
+  _gradients: new Map(),
+  gradient(ctx, key, x0, y0, x1, y1, stops) {
+    let g = this._gradients.get(key);
+    if (!g) {
+      g = ctx.createLinearGradient(x0, y0, x1, y1);
+      for (const s of stops) g.addColorStop(s[0], s[1]);
+      this._gradients.set(key, g);
+    }
+    return g;
+  },
+
+  // ---- additive glow (cheap fake bloom) --------------------------------
+  // Pre-renders a soft radial sprite per color (tinting drawImage isn't
+  // possible, so we cache one sprite per distinct color) and blits it with
+  // the 'lighter' composite op. Fast enough for per-particle use.
+  _glowSprites: new Map(),
+  _glowSprite(color) {
+    let c = this._glowSprites.get(color);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d');
+      const rg = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      rg.addColorStop(0, color);
+      rg.addColorStop(0.35, color);
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, 64, 64);
+      this._glowSprites.set(color, c);
+    }
+    return c;
+  },
+  glow(ctx, x, y, r, color, intensity) {
+    if (intensity === undefined) intensity = 1;
+    const sprite = this._glowSprite(color);
+    const prevOp = ctx.globalCompositeOperation;
+    const prevA = ctx.globalAlpha;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.max(0, Math.min(1, intensity));
+    ctx.drawImage(sprite, x - r, y - r, r * 2, r * 2);
+    ctx.globalCompositeOperation = prevOp;
+    ctx.globalAlpha = prevA;
+  },
+
+  // ---- path / shape utilities ------------------------------------------
+  roundRect(ctx, x, y, w, h, r) {
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  },
+
+  // Soft elliptical drop shadow at an arbitrary point.
+  shadowEllipse(ctx, x, y, rx, ry, alpha) {
+    const prevA = ctx.globalAlpha;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = prevA;
+  },
+
+  // Lit top edge highlight + a 1px ambient-occlusion line at the bottom.
+  rimLight(ctx, x, y, w, h, lightColor, shadeColor) {
+    const prevA = ctx.globalAlpha;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = lightColor || 'rgba(255,255,255,0.6)';
+    ctx.fillRect(x, y, w, 1);
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = shadeColor || 'rgba(0,0,0,0.6)';
+    ctx.fillRect(x, y + h - 1, w, 1);
+    ctx.globalAlpha = prevA;
+  },
+
+  // One text helper that wraps the repeated glow/shadow patterns.
+  text(ctx, str, x, y, opts) {
+    opts = opts || {};
+    ctx.save();
+    if (opts.font) ctx.font = opts.font;
+    ctx.textAlign = opts.align || 'left';
+    ctx.textBaseline = opts.baseline || 'alphabetic';
+    if (opts.glow && this.quality === 'high') {
+      ctx.shadowColor = opts.glow;
+      ctx.shadowBlur = opts.glowBlur || 12;
+    } else if (opts.shadow) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText(str, x + (opts.shadowOffset || 2), y + (opts.shadowOffset || 2));
+    }
+    ctx.fillStyle = opts.fill || '#fff';
+    ctx.fillText(str, x, y);
+    ctx.restore();
+  },
+
+  // ---- offscreen scratch pool (bloom / static art) ---------------------
+  _scratch: {},
+  getScratch(name, w, h) {
+    let s = this._scratch[name];
+    if (!s) {
+      s = document.createElement('canvas');
+      this._scratch[name] = s;
+    }
+    if (s.width !== w || s.height !== h) { s.width = w; s.height = h; }
+    return s;
+  },
+
+  // ---- screen shake (trauma based) -------------------------------------
+  shake: {
+    trauma: 0,
+    maxOffset: 16,
+    offset: { x: 0, y: 0 },
+    add(t) { this.trauma = Math.min(1, this.trauma + t); },
+    update(dt) {
+      this.trauma = Math.max(0, this.trauma - dt * 2.2);
+      const amt = this.trauma * this.trauma;
+      this.offset.x = (Math.random() * 2 - 1) * amt * this.maxOffset;
+      this.offset.y = (Math.random() * 2 - 1) * amt * this.maxOffset;
+    },
+    reset() { this.trauma = 0; this.offset.x = 0; this.offset.y = 0; }
+  },
+
+  // ---- hit-stop (freeze frame) -----------------------------------------
+  hitStop: {
+    timer: 0,
+    trigger(s) { this.timer = Math.max(this.timer, s); }
+  },
+
+  // ---- full-screen flash -----------------------------------------------
+  flash: {
+    color: '#ffffff', a: 0, decay: 3,
+    trigger(color, a, decay) {
+      this.color = color || '#ffffff';
+      this.a = Math.max(this.a, a);
+      this.decay = decay || 3;
+    },
+    update(dt) { if (this.a > 0) this.a = Math.max(0, this.a - this.decay * dt); },
+    render(ctx, w, h) {
+      if (this.a <= 0) return;
+      const prevA = ctx.globalAlpha;
+      ctx.globalAlpha = this.a;
+      ctx.fillStyle = this.color;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = prevA;
+    }
+  },
+
+  // Convenience: fire a combined impact (shake + optional freeze + flash).
+  impact(trauma, stopSec, flashColor, flashA) {
+    if (trauma) this.shake.add(trauma);
+    if (stopSec) this.hitStop.trigger(stopSec);
+    if (flashColor) this.flash.trigger(flashColor, flashA || 0.25, 5);
+  }
+};
+  </script>
+  <script>
 class InputHandler {
   constructor() {
     this.keys = {};
@@ -3435,7 +3618,11 @@ class Player {
     this.landedThisFrame = !wasOnGround && this.onGround;
     if (this.landedThisFrame) {
       this.landingImpact = fallSpeed;
-      if (fallSpeed > 450) this.landSquashTimer = 0.12;
+      if (fallSpeed > 450) {
+        this.landSquashTimer = 0.12;
+        // Hard landings give the camera a little jolt, scaled to fall speed.
+        FX.shake.add(Math.min(0.22, (fallSpeed - 450) / 2200));
+      }
     }
     if (this.landSquashTimer > 0) this.landSquashTimer -= dt;
 
@@ -8058,6 +8245,9 @@ function startGame(characterType, levelIndex) {
   marketCrashActive = false;
   marketCrashTimer = 0;
   marketCrashShakeOffset = { x: 0, y: 0 };
+  FX.shake.reset();
+  FX.hitStop.timer = 0;
+  FX.flash.a = 0;
   diamondSpawnTimer = 0;
   dhTickTimer = 0;
   leaderboard.resetSession();
@@ -8103,6 +8293,10 @@ function spawnFromBlock(contents, x, y) {
 function update(dt) {
   gameTime += dt;
 
+  // Tick global FX timers every frame (must decay here, not in render()).
+  FX.shake.update(dt);
+  FX.flash.update(dt);
+
   // Debug mode toggle
   if (input.wasPressed('F1') || input.wasPressed('Backquote')) {
     debugMode = !debugMode;
@@ -8137,6 +8331,15 @@ function updateTitle(dt) {
 }
 
 function updatePlaying(dt) {
+  // Hit-stop: freeze gameplay physics for a few frames on big impacts, but
+  // keep particles & floating text animating so the freeze reads as "punch".
+  if (FX.hitStop.timer > 0) {
+    FX.hitStop.timer -= dt;
+    particles.update(dt);
+    floatingText.update(dt);
+    return;
+  }
+
   // Handle death pause
   if (deathPauseTimer > 0) {
     deathPauseTimer -= dt;
@@ -8267,6 +8470,7 @@ function updatePlaying(dt) {
         floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, '+200', CONFIG.COLORS.BULL_GOLD);
         player.score += 200;
         audio.playStomp();
+        FX.impact(0.3, 0.04);
         continue;
       }
 
@@ -8287,6 +8491,7 @@ function updatePlaying(dt) {
             floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, '+500', CONFIG.COLORS.BULL_GOLD, 22);
             player.score += 500;
             audio.playStomp();
+            FX.impact(0.45, 0.08, '#FFFFFF', 0.22);
           } else {
             // First stomp — high bounce, must land again without touching ground
             player.vy = -500; // Higher bounce for combo opportunity
@@ -8295,6 +8500,7 @@ function updatePlaying(dt) {
             floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, 'STOMP AGAIN!', '#FF8800', 18);
             player.score += 50;
             audio.playGrizzlyStomp();
+            FX.impact(0.22, 0.05);
           }
         } else {
           // STOMP baby bears
@@ -8306,9 +8512,11 @@ function updatePlaying(dt) {
             particles.bearDeath(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2);
             floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, '+200', CONFIG.COLORS.BULL_GOLD);
             player.score += 200;
+            FX.impact(0.28, 0.05);
           } else {
             floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, 'HIT!', CONFIG.COLORS.TICKER_RED, 18);
             player.score += 50;
+            FX.impact(0.15, 0.03);
           }
         }
       } else {
@@ -8319,6 +8527,7 @@ function updatePlaying(dt) {
         } else {
           audio.playDamage();
           floatingText.spawn(player.x + player.width / 2, player.y - 20, 'OUCH!', CONFIG.COLORS.TICKER_RED, 20);
+          FX.impact(0.5, 0.07, '#FF3333', 0.35);
           // Knockback
           player.vx = (player.x < enemy.x) ? -200 : 200;
           player.vy = -200;
@@ -8345,6 +8554,7 @@ function updatePlaying(dt) {
         floatingText.spawn(player.x + player.width / 2, player.y - 40,
           'DIAMOND HANDS!', '#88DDFF', 28, 2.5);
         particles.powerUp(player.x + player.width / 2, player.y + player.height / 2, '#88DDFF');
+        FX.impact(0.35, 0.05, '#88DDFF', 0.3);
       }
     } else if (c.type === 'hodlItem') {
       player.applyPowerUp('hodlItem');
@@ -8368,6 +8578,7 @@ function updatePlaying(dt) {
       particles.powerUp(player.x + player.width / 2, player.y + player.height / 2, '#88DDFF');
       floatingText.spawn(player.x + player.width / 2, player.y - 40,
         'DIAMOND HANDS!', '#88DDFF', 28, 2.5);
+      FX.impact(0.35, 0.05, '#88DDFF', 0.3);
     }
   }
 
@@ -8381,6 +8592,7 @@ function updatePlaying(dt) {
       audio.playSuperJump();
       floatingText.spawn(pad.x + pad.width / 2, pad.y - 20, 'SHORT SQUEEZE!', '#00FF88', 20, 1.5);
       particles.powerUp(pad.x + pad.width / 2, pad.y, '#00FF88');
+      FX.impact(0.4, 0, '#00FF88', 0.2);
     }
   }
 
@@ -8537,6 +8749,9 @@ function updatePlaying(dt) {
             audio.playBossDeath();
             floatingText.spawn(boss.x + boss.width / 2, boss.y - 30, '+2000 WHALE DOWN!', CONFIG.COLORS.BULL_GOLD, 28, 3.0);
             player.score += 2000;
+            FX.impact(0.8, 0.12, '#FFFFFF', 0.45);
+          } else {
+            FX.impact(0.35, 0.06);
           }
         } else {
           const playerBottom = player.y + player.height;
@@ -8552,9 +8767,11 @@ function updatePlaying(dt) {
               audio.playBossDeath();
               floatingText.spawn(boss.x + boss.width / 2, boss.y - 30, '+2000 WHALE DOWN!', CONFIG.COLORS.BULL_GOLD, 28, 3.0);
               player.score += 2000;
+              FX.impact(0.8, 0.12, '#FFFFFF', 0.45);
             } else {
               floatingText.spawn(boss.x + boss.width / 2, boss.y - 20, 'HIT! ' + boss.hp + '/' + boss.maxHp, '#FF8800', 20);
               player.score += 100;
+              FX.impact(0.4, 0.07);
               if (boss.phase === 2 && boss.hp === 6) {
                 audio.playBossRoar();
                 floatingText.spawn(boss.x + boss.width / 2, boss.y - 50, 'PHASE 2!', '#FF4444', 24, 2.0);
@@ -8571,6 +8788,7 @@ function updatePlaying(dt) {
             } else {
               audio.playDamage();
               floatingText.spawn(player.x + player.width / 2, player.y - 20, 'OUCH!', CONFIG.COLORS.TICKER_RED, 20);
+              FX.impact(0.5, 0.07, '#FF3333', 0.35);
               player.vx = (player.x < boss.x) ? -250 : 250;
               player.vy = -250;
             }
@@ -8592,6 +8810,7 @@ function updatePlaying(dt) {
               player.vy = -300;
               player.vx = (player.x < sw.x) ? -200 : 200;
               floatingText.spawn(player.x + player.width / 2, player.y - 20, 'SHOCKWAVE!', '#FFAA00', 18);
+              FX.impact(0.5, 0.06, '#FFAA00', 0.3);
             }
             break;
           }
@@ -8690,6 +8909,7 @@ function updatePlaying(dt) {
 
 function playerDeath(cause) {
   flashCrashTimer = 0.3;
+  FX.impact(0.9, 0.1, '#FF0000', 0.5);
   if (cause === 'pit' && !marginCallShown) {
     marginCallShown = true;
     audio.playMarginCall();
@@ -8925,9 +9145,14 @@ function renderVignette(ctx) {
 }
 
 function renderPlaying() {
-  if (marketCrashActive) {
+  // Combine impact shake (FX) with the sustained market-crash shake, applied
+  // inside the clipped viewport so the whole world jolts together.
+  const shakeX = FX.shake.offset.x + (marketCrashActive ? marketCrashShakeOffset.x : 0);
+  const shakeY = FX.shake.offset.y + (marketCrashActive ? marketCrashShakeOffset.y : 0);
+  const shaking = shakeX !== 0 || shakeY !== 0;
+  if (shaking) {
     ctx.save();
-    ctx.translate(marketCrashShakeOffset.x, marketCrashShakeOffset.y);
+    ctx.translate(shakeX, shakeY);
   }
 
   // Background (parallax)
@@ -9020,14 +9245,20 @@ function renderPlaying() {
     ctx.globalAlpha = 1;
   }
 
-  if (marketCrashActive) {
+  if (shaking) {
     ctx.restore();
+  }
+
+  if (marketCrashActive) {
     // Red tint overlay
     ctx.globalAlpha = 0.15 + Math.sin(marketCrashTimer * 6) * 0.05;
     ctx.fillStyle = '#FF0000';
     ctx.fillRect(0, 0, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
     ctx.globalAlpha = 1;
   }
+
+  // Full-screen impact flash (stomps, power-ups, big events)
+  FX.flash.render(ctx, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
 
   renderVignette(ctx);
 
@@ -9225,6 +9456,7 @@ function gameLoop(timestamp) {
 // ==========================================
 //  Start!
 // ==========================================
+FX.initQuality();
 requestAnimationFrame(gameLoop);
   </script>
   <script>
