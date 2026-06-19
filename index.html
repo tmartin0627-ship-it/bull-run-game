@@ -915,7 +915,7 @@ class Particle {
     this.active = false;
   }
 
-  init(x, y, vx, vy, color, life, size) {
+  init(x, y, vx, vy, color, life, size, opts) {
     this.x = x;
     this.y = y;
     this.vx = vx;
@@ -925,32 +925,88 @@ class Particle {
     this.maxLife = life;
     this.size = size;
     this.active = true;
+    opts = opts || {};
+    this.shape = opts.shape || 'square'; // square | circle | spark | streak
+    this.glow = !!opts.glow;
+    this.gravityScale = opts.gravityScale !== undefined ? opts.gravityScale : 1;
+    this.drag = opts.drag || 0;
+    this.shrink = !!opts.shrink;
+    this.rot = opts.rot || 0;
+    this.spin = opts.spin || 0;
   }
 
   update(dt) {
     if (!this.active) return;
+    if (this.drag) {
+      const f = Math.max(0, 1 - this.drag * dt);
+      this.vx *= f;
+      this.vy *= f;
+    }
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    this.vy += 400 * dt;
+    this.vy += 400 * this.gravityScale * dt;
+    if (this.spin) this.rot += this.spin * dt;
     this.life -= dt;
     if (this.life <= 0) this.active = false;
   }
 
+  _alpha() { return Math.min(1, (this.life / this.maxLife) * 1.4); }
+  _size() { return this.shrink ? this.size * (this.life / this.maxLife) : this.size; }
+
+  // Non-additive shapes (debris, dust, sparks). Glow particles are skipped
+  // here and drawn in the system's batched additive pass instead.
   render(ctx, camera) {
-    if (!this.active) return;
-    const alpha = this.life / this.maxLife;
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = this.color;
+    if (!this.active || this.glow) return;
+    const alpha = this._alpha();
+    const s = this._size();
     const sx = this.x - camera.x;
     const sy = this.y - camera.y;
-    ctx.fillRect(sx - this.size / 2, sy - this.size / 2, this.size, this.size);
+    ctx.globalAlpha = alpha;
+    if (this.shape === 'circle') {
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, s * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (this.shape === 'spark' || this.shape === 'streak') {
+      const len = this.shape === 'streak' ? 0.05 : 0.025;
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = s * 0.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx - this.vx * len, sy - this.vy * len);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = this.color;
+      if (this.rot) {
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(this.rot);
+        ctx.fillRect(-s / 2, -s / 2, s, s);
+        ctx.restore();
+      } else {
+        ctx.fillRect(sx - s / 2, sy - s / 2, s, s);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Additive glow blit (called inside the system's 'lighter' pass).
+  renderGlow(ctx, camera) {
+    if (!this.active || !this.glow) return;
+    const alpha = this._alpha();
+    const r = this._size() * 2.0;
+    const sx = this.x - camera.x;
+    const sy = this.y - camera.y;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(FX._glowSprite(this.color), sx - r, sy - r, r * 2, r * 2);
     ctx.globalAlpha = 1;
   }
 }
 
 class ParticleSystem {
   constructor(poolSize) {
-    poolSize = poolSize || 300;
+    poolSize = poolSize || (FX.quality === 'low' ? 300 : 400);
     this.particles = [];
     for (let i = 0; i < poolSize; i++) {
       this.particles.push(new Particle());
@@ -958,20 +1014,30 @@ class ParticleSystem {
   }
 
   emit(x, y, count, config) {
+    if (FX.quality === 'low') count = Math.ceil(count * 0.6);
+    const spread = config.spread !== undefined ? config.spread : 10;
+    const opts = {
+      shape: config.shape, glow: config.glow, gravityScale: config.gravityScale,
+      drag: config.drag, shrink: config.shrink, spin: config.spin
+    };
     let emitted = 0;
     for (const p of this.particles) {
       if (!p.active && emitted < count) {
-        const angle = Math.random() * Math.PI * 2;
+        const angle = config.angle !== undefined
+          ? config.angle + (Math.random() - 0.5) * (config.angleSpread || 0)
+          : Math.random() * Math.PI * 2;
         const speed = config.speed * (0.5 + Math.random() * 0.5);
         const upBias = config.upwardBias || 0;
+        if (config.spin) opts.rot = Math.random() * Math.PI * 2;
         p.init(
-          x + (Math.random() - 0.5) * 10,
-          y + (Math.random() - 0.5) * 10,
+          x + (Math.random() - 0.5) * spread,
+          y + (Math.random() - 0.5) * spread,
           Math.cos(angle) * speed,
           Math.sin(angle) * speed - upBias,
           config.colors[Math.floor(Math.random() * config.colors.length)],
           config.life * (0.7 + Math.random() * 0.3),
-          config.size * (0.5 + Math.random() * 0.5)
+          config.size * (0.5 + Math.random() * 0.5),
+          opts
         );
         emitted++;
       }
@@ -979,53 +1045,74 @@ class ParticleSystem {
   }
 
   bearDeath(x, y) {
-    this.emit(x, y, 18, {
-      speed: 220,
-      upwardBias: 180,
+    // Tumbling debris...
+    this.emit(x, y, 14, {
+      speed: 220, upwardBias: 180,
       colors: [CONFIG.COLORS.PARTICLE_RED, '#FF6633', '#CC0000', CONFIG.COLORS.PARTICLE_BEAR],
-      life: 0.7,
-      size: 8
+      life: 0.7, size: 8, spin: 8, shrink: true
+    });
+    // ...plus a burst of additive sparks for punch.
+    this.emit(x, y, 10, {
+      speed: 260, upwardBias: 120,
+      colors: ['#FFDD66', '#FFFFFF', '#FF8800'],
+      life: 0.5, size: 6, glow: true, shape: 'spark', drag: 2, shrink: true
     });
   }
 
   bullCollect(x, y) {
-    this.emit(x, y, 10, {
-      speed: 140,
-      upwardBias: 120,
+    // Glowing gold sparkle that floats up.
+    this.emit(x, y, 8, {
+      speed: 130, upwardBias: 130,
       colors: [CONFIG.COLORS.BULL_GOLD, '#FFF', '#FFE4B5', '#FFAA00'],
-      life: 0.5,
-      size: 5
+      life: 0.55, size: 6, glow: true, gravityScale: 0.3, drag: 1.5, shrink: true
+    });
+    this.coinSparkle(x, y);
+  }
+
+  coinSparkle(x, y) {
+    this.emit(x, y, 5, {
+      speed: 60, upwardBias: 30,
+      colors: ['#FFFFFF', '#FFF1A8'],
+      life: 0.4, size: 4, glow: true, gravityScale: 0.1, shape: 'circle', shrink: true
     });
   }
 
   powerUp(x, y, color) {
-    this.emit(x, y, 20, {
-      speed: 180,
-      upwardBias: 150,
+    this.emit(x, y, 16, {
+      speed: 190, upwardBias: 150,
       colors: [color, '#FFF', '#FFE4B5'],
-      life: 0.8,
-      size: 6
+      life: 0.8, size: 7, glow: true, drag: 1.2, shrink: true
     });
   }
 
   rocketBoost(x, y) {
     // Fiery exhaust sparks shooting downward from the player's feet.
     this.emit(x, y, 5, {
-      speed: 100,
-      upwardBias: -180, // negative bias => particles are flung downward
+      speed: 100, upwardBias: -180, // negative bias => flung downward
       colors: ['#FFFFFF', '#FFDD33', '#FF8800', '#FF4400'],
-      life: 0.4,
-      size: 7
+      life: 0.4, size: 7, glow: true, gravityScale: -0.4, shrink: true
     });
   }
 
-  dust(x, y, count) {
+  // Directional kicked-up dust (dirX: -1 left, 1 right, 0 omni).
+  dust(x, y, count, dirX) {
+    dirX = dirX || 0;
     this.emit(x, y, count || 6, {
-      speed: 70,
-      upwardBias: 40,
+      speed: 70, upwardBias: 40,
       colors: ['#9a9ab8', '#7a7a98', '#b8b8d0'],
-      life: 0.35,
-      size: 4
+      life: 0.35, size: 4, gravityScale: 0.6, drag: 2, shrink: true,
+      angle: dirX !== 0 ? (dirX > 0 ? -0.6 : Math.PI + 0.6) : undefined,
+      angleSpread: dirX !== 0 ? 1.2 : 0
+    });
+  }
+
+  // Horizontal speed streaks trailing a fast-moving player.
+  speedLines(x, y, dirX) {
+    this.emit(x, y, 2, {
+      speed: 30, spread: 22,
+      colors: ['rgba(255,255,255,0.7)', 'rgba(180,220,255,0.6)'],
+      life: 0.22, size: 7, shape: 'streak', gravityScale: 0,
+      angle: dirX > 0 ? Math.PI : 0, angleSpread: 0.2
     });
   }
 
@@ -1036,9 +1123,17 @@ class ParticleSystem {
   }
 
   render(ctx, camera) {
+    // Normal pass (debris, dust, sparks).
     for (const p of this.particles) {
-      if (p.active) p.render(ctx, camera);
+      if (p.active && !p.glow) p.render(ctx, camera);
     }
+    // Batched additive pass for glowing particles — set the composite op once.
+    const prev = ctx.globalCompositeOperation;
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of this.particles) {
+      if (p.active && p.glow) p.renderGlow(ctx, camera);
+    }
+    ctx.globalCompositeOperation = prev;
   }
 }
 
@@ -8404,8 +8499,14 @@ function updatePlaying(dt) {
   runDustTimer += dt;
   if (player.onGround && Math.abs(player.vx) > 200 && runDustTimer > 0.18) {
     runDustTimer = 0;
+    const dir = player.vx > 0 ? -1 : 1; // dust kicks out behind the run direction
     particles.dust(player.x + (player.facingRight ? 6 : player.width - 6),
-      player.y + player.height - 2, 2);
+      player.y + player.height - 2, 2, dir);
+    // Speed streaks once really moving (full run speed).
+    if (Math.abs(player.vx) > CONFIG.PLAYER_RUN_SPEED * 0.92) {
+      particles.speedLines(player.x + player.width / 2, player.y + player.height * 0.4,
+        player.vx > 0 ? 1 : -1);
+    }
   }
 
   // Rocket exhaust sparks while launching off a Short Squeeze pad
