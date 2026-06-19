@@ -9704,5 +9704,592 @@ requestAnimationFrame(gameLoop);
   }, 100);
 })();
   </script>
+  <script>
+// ============================================================
+//  PLAYTEST BOT
+//  A heuristic, self-playing bot that runs the game end-to-end
+//  and produces a design/fun feedback report. Enable with the
+//  ?bot=1 URL param, or toggle in-game with the B key. It drives
+//  the existing InputHandler (no game changes), watches the world
+//  globals for telemetry, and renders a live HUD + a final report
+//  panel (Copy / Download). Press R to restart a run.
+// ============================================================
+(function () {
+  'use strict';
+
+  // Jump/movement reach (derived from CONFIG physics: normal jump ~93px high,
+  // super jump ~156px). Horizontal reach with air control at run speed.
+  const MAX_GAP = 175;        // clearable with a normal full-hold jump
+  const MAX_SUPER_GAP = 235;  // clearable with a crouch super-jump
+  const ENEMY_NAMES = {
+    BabyBear: 'baby bear', GrizzlyBear: 'grizzly', FlashTrader: 'flash trader',
+    ShortSeller: 'short seller', WhaleBoss: 'the whale (boss)'
+  };
+
+  const Bot = {
+    on: false,
+    runFinished: false,
+    // run/level telemetry
+    levels: [],
+    cur: null,
+    curIdx: -1,
+    runStartTime: 0,
+    sawPlaying: false,
+    // control state
+    jumpHoldTimer: 0,
+    superState: 'none',   // 'none' | 'charging'
+    superTimer: 0,
+    stuckTimer: 0,
+    lastX: 0,
+    loggedGaps: {},
+    // live HUD
+    action: 'idle',
+    fpsEMA: 60,
+    lastFrameT: 0,
+    deathSeen: 0,
+  };
+  window.Bot = Bot;
+
+  // ---- world probes ---------------------------------------------------
+  // Highest solid top at column x that is a surface to stand on (at/below feet).
+  function groundColumn(x, feetY) {
+    let best = null;
+    for (const s of level.solids) {
+      if (x >= s.x && x <= s.x + s.width) {
+        const top = s.y;
+        if (top >= feetY - 8 && top <= feetY + 160) {
+          if (best === null || top < best) best = top;
+        }
+      }
+    }
+    return best;
+  }
+
+  // A pit beginning just ahead — returns {edge,width,landingTop} or null.
+  function gapAhead(pf, feetY) {
+    const start = pf + player.width * 0.5 + 6;
+    let edge = null;
+    for (let d = 0; d <= 64; d += 6) {
+      if (groundColumn(start + d, feetY) === null) { edge = start + d; break; }
+    }
+    if (edge === null) return null;
+    for (let d = 12; d <= 250; d += 8) {
+      const top = groundColumn(edge + d, feetY);
+      if (top !== null && top <= feetY + 80) {
+        return { edge, width: d, landingTop: top };
+      }
+    }
+    return { edge, width: 999, landingTop: null }; // bottomless within scan
+  }
+
+  // A blocking step/wall ahead within jump height.
+  function wallAhead(pf, feetY, w) {
+    for (const s of level.solids) {
+      if (s.semiSolid) continue; // desks are jump-through, not walls
+      if (s.x > pf && s.x < pf + w + 40) {
+        if (s.y < feetY - 8 && s.y > feetY - 110) return true;
+      }
+    }
+    return false;
+  }
+
+  function enemyAhead(pf, feetY) {
+    for (const e of level.enemies) {
+      if (!e.alive) continue;
+      const ex = e.x + e.width / 2;
+      const dx = ex - pf;
+      if (dx > 0 && dx < 100 && Math.abs((e.y + e.height) - feetY) < 72) return dx;
+    }
+    return -1;
+  }
+
+  // ---- the brain ------------------------------------------------------
+  function think() {
+    const intent = { right: false, left: false, down: false, holdJump: false, pressJump: false };
+    const pf = player.x + player.width / 2;
+    const feetY = player.y + player.height;
+    const onG = player.onGround;
+    const goalX = level.goalPosition ? level.goalPosition.x : 1e9;
+
+    // Continue an in-progress super-jump charge.
+    if (Bot.superState === 'charging') {
+      Bot.superTimer += 1 / 60;
+      intent.down = true;            // keep crouching to charge
+      if (player.superJumpReady) {   // release + jump = super jump
+        intent.down = false;
+        intent.pressJump = true;
+        intent.holdJump = true;
+        Bot.jumpHoldTimer = 0.34;
+        Bot.superState = 'none';
+      } else if (Bot.superTimer > 0.6) {
+        Bot.superState = 'none';     // give up charging (failsafe)
+      }
+      return intent;
+    }
+
+    const goRight = pf < goalX - 8;
+    intent.right = goRight;
+    intent.left = false;
+
+    // Maintain an active jump's hold (variable height).
+    if (Bot.jumpHoldTimer > 0) {
+      Bot.jumpHoldTimer -= 1 / 60;
+      intent.holdJump = true;
+    }
+
+    if (onG) {
+      const gap = gapAhead(pf, feetY);
+      if (gap && (gap.edge - pf) < 46) {
+        if (gap.width <= MAX_GAP) {
+          intent.pressJump = true; intent.holdJump = true; Bot.jumpHoldTimer = 0.34;
+          Bot.action = 'jump pit';
+        } else if (gap.width <= MAX_SUPER_GAP) {
+          intent.right = false;                 // stop to charge a super jump
+          Bot.superState = 'charging'; Bot.superTimer = 0;
+          Bot.action = 'charge super-jump';
+        } else {
+          intent.right = false;                 // unreachable — stop at the edge
+          logGap(gap.edge, gap.width);
+          Bot.action = 'blocked: gap too wide';
+        }
+      } else if (enemyAhead(pf, feetY) >= 0) {
+        intent.pressJump = true; intent.holdJump = true; Bot.jumpHoldTimer = 0.26;
+        Bot.action = 'jump enemy';
+      } else if (wallAhead(pf, feetY, player.width)) {
+        intent.pressJump = true; intent.holdJump = true; Bot.jumpHoldTimer = 0.30;
+        Bot.action = 'jump wall';
+      } else {
+        Bot.action = goRight ? 'run' : 'arrived';
+      }
+
+      // Stuck escalation: no forward progress while grounded.
+      if (pf <= Bot.lastX + 1.5) {
+        Bot.stuckTimer += 1 / 60;
+        if (Bot.stuckTimer > 1.0) {
+          intent.pressJump = true; intent.holdJump = true; Bot.jumpHoldTimer = 0.34;
+          if (Bot.stuckTimer > 2.0) { intent.right = false; intent.left = true; } // back off
+          if (Bot.stuckTimer > 2.6) { Bot.stuckTimer = 0; logStuck(pf); }
+          Bot.action = 'stuck — retrying';
+        }
+      } else {
+        Bot.stuckTimer = 0;
+      }
+      Bot.lastX = Math.max(Bot.lastX, pf);
+    } else {
+      // Airborne: keep steering toward the goal to complete the arc.
+      intent.right = goRight;
+    }
+    return intent;
+  }
+
+  function logGap(x, width) {
+    const key = currentLevelIndex + ':' + Math.round(x / 50);
+    if (!Bot.loggedGaps[key] && Bot.cur) {
+      Bot.loggedGaps[key] = true;
+      Bot.cur.hardGaps.push({ x: Math.round(x), width: Math.round(width) });
+    }
+  }
+  function logStuck(x) {
+    if (Bot.cur) Bot.cur.stuckSpots.push({ x: Math.round(x) });
+  }
+
+  // ---- per-level analysis (design metrics from the level itself) ------
+  function analyzeLevel() {
+    const gx = level.goalPosition ? level.goalPosition.x : (level.width || 9600);
+    const cols = level.collectibles || [];
+    const bulls = cols.filter(c => c.type === 'bull').length;
+    const colTypes = [...new Set(cols.filter(c => c.type !== 'redCandle').map(c => c.type))];
+    const enemyTypes = {};
+    for (const e of level.enemies || []) {
+      const n = ENEMY_NAMES[e.constructor.name] || e.constructor.name;
+      enemyTypes[n] = (enemyTypes[n] || 0) + 1;
+    }
+    const grounds = (level.solids || []).filter(s => s.type === 'ground').sort((a, b) => a.x - b.x);
+    const pits = [];
+    for (let i = 0; i < grounds.length - 1; i++) {
+      const gap = grounds[i + 1].x - (grounds[i].x + grounds[i].width);
+      if (gap > 20) pits.push({ x: Math.round(grounds[i].x + grounds[i].width), width: Math.round(gap) });
+    }
+    const events = [];
+    for (const e of level.enemies || []) events.push(e.x);
+    for (const c of cols) if (c.type !== 'redCandle') events.push(c.x);
+    for (const p of pits) events.push(p.x);
+    for (const pad of level.shortSqueezePads || []) events.push(pad.x);
+    events.sort((a, b) => a - b);
+    let longestEmpty = events.length ? events[0] : gx, emptyAt = 0;
+    for (let i = 1; i < events.length; i++) {
+      const g = events[i] - events[i - 1];
+      if (g > longestEmpty) { longestEmpty = g; emptyAt = events[i - 1]; }
+    }
+    if (events.length) {
+      const tail = gx - events[events.length - 1];
+      if (tail > longestEmpty) { longestEmpty = tail; emptyAt = events[events.length - 1]; }
+    }
+    const per1k = gx / 1000;
+    return {
+      gx, bulls, colTypes, enemyTypes, pits,
+      hasPads: (level.shortSqueezePads || []).length > 0,
+      hasBlocks: (level.questionBlocks || []).length > 0,
+      hasBoss: !!level.bossArena,
+      longestEmpty: Math.round(longestEmpty), emptyAt: Math.round(emptyAt),
+      rewardDensity: +(bulls / per1k).toFixed(1),
+      challengeDensity: +(((level.enemies || []).length + pits.length) / per1k).toFixed(1),
+      mechanicCount: Object.keys(enemyTypes).length + colTypes.length +
+        ((level.shortSqueezePads || []).length ? 1 : 0) + ((level.questionBlocks || []).length ? 1 : 0),
+    };
+  }
+
+  function startLevelRecord() {
+    const a = analyzeLevel();
+    Bot.cur = {
+      idx: currentLevelIndex,
+      name: (level && level.name) || ('Level ' + currentLevelIndex),
+      analysis: a,
+      startTime: gameTime,
+      endTime: null,
+      completed: false,
+      maxX: player ? player.x : 0,
+      startScore: player ? player.score : 0,
+      endScore: player ? player.score : 0,
+      startBulls: player ? (player.totalBullsCollected || 0) : 0,
+      jumps: 0,
+      deaths: [],
+      hardGaps: [],
+      stuckSpots: [],
+    };
+    Bot.levels.push(Bot.cur);
+    Bot.curIdx = currentLevelIndex;
+    Bot.lastX = player ? player.x : 0;
+    Bot.stuckTimer = 0;
+    Bot.loggedGaps = {};
+  }
+
+  function finalizeLevel(completed) {
+    if (!Bot.cur) return;
+    Bot.cur.endTime = gameTime;
+    Bot.cur.completed = completed;
+    Bot.cur.endScore = player ? player.score : Bot.cur.endScore;
+    Bot.cur.pctReached = Math.min(100, Math.round((Bot.cur.maxX / Bot.cur.analysis.gx) * 100));
+    Bot.cur.timeSec = +(Bot.cur.endTime - Bot.cur.startTime).toFixed(1);
+  }
+
+  // ---- driving menus so a full run is autonomous ----------------------
+  function press(code) { input.justPressed[code] = true; }
+
+  function driveMenu(state) {
+    if (state === GameState.TITLE) {
+      if (Bot.runFinished) return;
+      if (typeof titleScreen === 'undefined' || !titleScreen) return;
+      if (titleScreen.phase === 'title') { press('Enter'); }
+      else { press('Digit1'); press('Enter'); } // pick Chad, confirm
+    } else if (state === GameState.GAME_OVER) {
+      press('Enter');
+    } else if (state === GameState.LEVEL_COMPLETE) {
+      if (typeof levelCompleteScreen !== 'undefined' && levelCompleteScreen &&
+          levelCompleteScreen.animTime > 2.6) press('Enter');
+    }
+  }
+
+  // ---- main hooks -----------------------------------------------------
+  function tick(dt) {
+    const state = currentState;
+    if (state === GameState.PLAYING) {
+      const intent = think();
+      input.keys['ArrowRight'] = intent.right;
+      input.keys['ArrowLeft'] = intent.left;
+      input.keys['ArrowDown'] = intent.down;
+      input.keys['Space'] = intent.holdJump;
+      if (intent.pressJump) { input.justPressed['Space'] = true; if (Bot.cur) Bot.cur.jumps++; }
+    } else {
+      driveMenu(state);
+    }
+  }
+
+  function clearDriving() {
+    input.keys['ArrowRight'] = false;
+    input.keys['ArrowLeft'] = false;
+    input.keys['ArrowDown'] = false;
+    input.keys['Space'] = false;
+  }
+
+  function observe(dt) {
+    const state = currentState;
+
+    // New run begins
+    if (state === GameState.PLAYING) {
+      Bot.sawPlaying = true;
+      if (!Bot.runStartTime) Bot.runStartTime = gameTime;
+      if (currentLevelIndex !== Bot.curIdx) {
+        if (Bot.cur && Bot.cur.endTime === null) finalizeLevel(false);
+        startLevelRecord();
+      }
+      if (Bot.cur) Bot.cur.maxX = Math.max(Bot.cur.maxX, player.x);
+
+      // Death capture (cause set by the playerDeath hook below)
+      if (window.__lastDeath && window.__lastDeath.seq !== Bot.deathSeen) {
+        Bot.deathSeen = window.__lastDeath.seq;
+        if (Bot.cur) Bot.cur.deaths.push({ x: Math.round(window.__lastDeath.x), cause: window.__lastDeath.cause });
+      }
+    }
+
+    if (state === GameState.LEVEL_COMPLETE && Bot.cur && Bot.cur.endTime === null) {
+      finalizeLevel(true);
+    }
+
+    // Run ends: game over, or returned to title after having played
+    if (!Bot.runFinished && Bot.sawPlaying &&
+        (state === GameState.GAME_OVER || state === GameState.TITLE)) {
+      if (Bot.cur && Bot.cur.endTime === null) finalizeLevel(state !== GameState.GAME_OVER);
+      finishRun(state === GameState.GAME_OVER ? 'game over' : 'all levels complete');
+    }
+  }
+
+  // ---- feedback engine ------------------------------------------------
+  function funScore(L) {
+    const a = L.analysis;
+    let s = 50;
+    s += Math.min(20, a.mechanicCount * 3);            // variety
+    s += Math.min(15, a.rewardDensity * 1.2);          // rewards to chase
+    s -= Math.min(20, L.deaths.length * 6);            // death friction
+    s -= Math.min(15, (a.longestEmpty / 1000) * 6);    // pacing lulls
+    s -= Math.min(10, L.hardGaps.length * 5);          // unfair gaps
+    if (L.completed) s += 8;
+    return Math.max(0, Math.min(100, Math.round(s)));
+  }
+
+  function levelNotes(L) {
+    const a = L.analysis, notes = [];
+    if (L.deaths.length) {
+      const byCause = {};
+      for (const d of L.deaths) byCause[d.cause] = (byCause[d.cause] || 0) + 1;
+      const parts = Object.entries(byCause).map(([c, n]) => n + '× ' + c);
+      const near = L.deaths.map(d => d.x).sort((x, y) => x - y);
+      notes.push('⚠ Difficulty: died ' + L.deaths.length + ' time(s) (' + parts.join(', ') +
+        ') around x≈' + near.join(', x≈') + '.');
+    }
+    for (const g of L.hardGaps) {
+      notes.push('⛔ Gap at x≈' + g.x + ' is ~' + g.width + 'px — at/above the bot\'s clearable limit (~' +
+        MAX_SUPER_GAP + 'px). Likely too hard or unreachable; consider narrowing or a launch pad.');
+    }
+    if (a.longestEmpty > 900) {
+      notes.push('💤 Pacing lull: ~' + a.longestEmpty + 'px empty stretch near x≈' + a.emptyAt +
+        ' with no rewards or hazards — add a bull trail or an enemy.');
+    }
+    if (a.rewardDensity < 4) {
+      notes.push('🪙 Low reward density (' + a.rewardDensity + ' bulls/1000px) — feels sparse to chase.');
+    } else if (a.rewardDensity > 22) {
+      notes.push('🪙 Very high reward density (' + a.rewardDensity + ' bulls/1000px) — bulls may feel trivial.');
+    }
+    if (a.mechanicCount <= 2) {
+      notes.push('🔁 Limited mechanic variety (' + a.mechanicCount + ') — risks feeling repetitive.');
+    } else {
+      notes.push('👍 Good mechanic variety (' + a.mechanicCount + ' distinct elements).');
+    }
+    if (L.stuckSpots.length) {
+      notes.push('🧱 Bot got stuck near x≈' + L.stuckSpots.map(s => s.x).join(', x≈') +
+        ' — possible awkward geometry or a jump the layout doesn\'t telegraph.');
+    }
+    if (!L.completed) {
+      notes.push('🏁 Bot could not finish (reached ' + (L.pctReached || 0) + '%). Treat the failure point as the main friction.');
+    }
+    return notes;
+  }
+
+  function buildReport() {
+    const completed = Bot.levels.filter(L => L.completed).length;
+    const deaths = Bot.levels.reduce((s, L) => s + L.deaths.length, 0);
+    const score = Bot.levels.length ? Bot.levels[Bot.levels.length - 1].endScore : 0;
+    const totalTime = +Bot.levels.reduce((s, L) => s + (L.timeSec || 0), 0).toFixed(1);
+    const overallFun = Bot.levels.length
+      ? Math.round(Bot.levels.reduce((s, L) => s + funScore(L), 0) / Bot.levels.length) : 0;
+
+    let md = '# Bull Run — Bot Playtest Report\n';
+    md += '_Heuristic bot v1 · ' + new Date().toLocaleString() + '_\n\n';
+    md += '## Summary\n';
+    md += '- Levels played: ' + Bot.levels.length + ' · completed: ' + completed + '\n';
+    md += '- Total play time: ' + totalTime + 's · total deaths: ' + deaths + ' · final score: $' + score + '\n';
+    md += '- **Overall fun score: ' + overallFun + '/100** _(rough heuristic: variety + rewards + flow − deaths/lulls)_\n\n';
+
+    for (const L of Bot.levels) {
+      const a = L.analysis;
+      md += '## ' + (L.idx + 1) + '. ' + L.name + '  ·  fun ' + funScore(L) + '/100\n';
+      md += '- Result: ' + (L.completed ? 'completed in ' + L.timeSec + 's' :
+        'FAILED at ' + (L.pctReached || 0) + '% (x≈' + Math.round(L.maxX) + ')') + '\n';
+      md += '- Deaths: ' + L.deaths.length + ' · jumps: ' + L.jumps + ' · length: ' + Math.round(a.gx) + 'px\n';
+      md += '- Reward density: ' + a.rewardDensity + ' bulls/1000px · challenge: ' + a.challengeDensity + ' hazards/1000px\n';
+      const ens = Object.keys(a.enemyTypes).length ? Object.entries(a.enemyTypes).map(([k, v]) => k + '×' + v).join(', ') : 'none';
+      md += '- Enemies: ' + ens + (a.hasPads ? ' · squeeze pads' : '') + (a.hasBlocks ? ' · ? blocks' : '') + (a.hasBoss ? ' · BOSS' : '') + '\n';
+      md += '- Notes:\n';
+      for (const n of levelNotes(L)) md += '  - ' + n + '\n';
+      md += '\n';
+    }
+
+    // Cross-level pacing/curve observations
+    md += '## Cross-level observations\n';
+    if (Bot.levels.length >= 2) {
+      const rd = Bot.levels.map(L => L.analysis.rewardDensity);
+      const cd = Bot.levels.map(L => L.analysis.challengeDensity);
+      md += '- Reward curve (bulls/1000px): ' + rd.join(' → ') + '\n';
+      md += '- Challenge curve (hazards/1000px): ' + cd.join(' → ') + '\n';
+      if (rd[0] - rd[rd.length - 1] > 6) md += '  - 🪙 Rewards thin out in later levels — risks feeling less satisfying as difficulty rises.\n';
+      if (cd[cd.length - 1] <= cd[0]) md += '  - 📉 Challenge does not clearly ramp across levels — consider escalating hazards.\n';
+      else md += '  - 📈 Challenge ramps across levels — good difficulty progression.\n';
+    }
+    const allEnemies = new Set();
+    Bot.levels.forEach(L => Object.keys(L.analysis.enemyTypes).forEach(e => allEnemies.add(e)));
+    md += '- Enemy types seen across the run: ' + ([...allEnemies].join(', ') || 'none') + '\n';
+
+    md += '\n## Top recommendations\n';
+    const recs = [];
+    const worst = Bot.levels.slice().sort((x, y) => funScore(x) - funScore(y))[0];
+    if (worst) recs.push('Focus on **' + worst.name + '** (lowest fun ' + funScore(worst) + '/100).');
+    const lulls = Bot.levels.filter(L => L.analysis.longestEmpty > 900);
+    if (lulls.length) recs.push('Tighten pacing lulls in: ' + lulls.map(L => L.name).join(', ') + '.');
+    const hard = Bot.levels.filter(L => L.hardGaps.length || L.deaths.length >= 2);
+    if (hard.length) recs.push('Re-balance difficulty spikes in: ' + hard.map(L => L.name).join(', ') + ' (add checkpoints / narrow gaps).');
+    if (!recs.length) recs.push('Solid run — no major balance issues detected by the bot.');
+    recs.forEach((r, i) => md += (i + 1) + '. ' + r + '\n');
+    md += '\n_Note: a heuristic bot is an imperfect player; its failure points highlight where the game is hardest to read, which is itself useful design feedback._\n';
+    return md;
+  }
+
+  function finishRun(reason) {
+    Bot.runFinished = true;
+    clearDriving();
+    const md = buildReport();
+    window.__botReport = md;
+    console.log('%c[BOT] Run finished (' + reason + '). Report:', 'color:#FFD700;font-weight:bold');
+    console.log(md);
+    showPanel(md);
+  }
+
+  // ---- report panel (DOM) ---------------------------------------------
+  function showPanel(md) {
+    let d = document.getElementById('botReportPanel');
+    if (!d) { d = document.createElement('div'); d.id = 'botReportPanel'; document.body.appendChild(d); }
+    d.style.cssText = 'position:fixed;top:3%;right:2%;width:min(580px,92vw);max-height:92vh;overflow:auto;' +
+      'z-index:99999;background:rgba(8,10,24,0.97);color:#dfe6ff;border:1px solid rgba(255,215,0,0.55);' +
+      'border-radius:12px;padding:14px 16px;font:13px/1.55 ui-monospace,Menlo,monospace;box-shadow:0 12px 50px rgba(0,0,0,0.65)';
+    d.innerHTML = '';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:0 0 12px';
+    pre.textContent = md;
+    d.appendChild(pre);
+    const row = document.createElement('div');
+    const mk = (label, fn) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'margin-right:8px;padding:7px 13px;background:#FFD700;color:#111;border:0;' +
+        'border-radius:7px;font:bold 12px ui-monospace,monospace;cursor:pointer';
+      b.onclick = fn; return b;
+    };
+    row.appendChild(mk('Copy', () => { if (navigator.clipboard) navigator.clipboard.writeText(md); }));
+    row.appendChild(mk('Download .md', () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+      a.download = 'bull-run-playtest.md'; a.click();
+    }));
+    row.appendChild(mk('Close', () => d.remove()));
+    d.appendChild(row);
+  }
+
+  // ---- live HUD overlay ----------------------------------------------
+  function renderOverlay() {
+    if (typeof ctx === 'undefined' || typeof canvas === 'undefined') return;
+    const w = 300, h = 64, x = canvas.width - w - 14, y = 14;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = 'rgba(6,8,20,0.82)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = Bot.runFinished ? '#FFD700' : '#00FF88';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillStyle = Bot.runFinished ? '#FFD700' : '#00FF88';
+    ctx.font = 'bold 13px ui-monospace,monospace';
+    ctx.fillText('🤖 PLAYTEST BOT' + (Bot.runFinished ? ' — DONE' : ''), x + 10, y + 8);
+    ctx.fillStyle = '#cfe';
+    ctx.font = '11px ui-monospace,monospace';
+    const L = Bot.cur;
+    const pct = L ? Math.min(100, Math.round((L.maxX / L.analysis.gx) * 100)) : 0;
+    const line1 = L ? ('L' + (L.idx + 1) + ' ' + pct + '% · deaths ' + L.deaths.length + ' · ' + Math.round(Bot.fpsEMA) + 'fps') : 'starting…';
+    ctx.fillText(line1, x + 10, y + 28);
+    ctx.fillStyle = '#9fb';
+    ctx.fillText('act: ' + Bot.action + '   [B]toggle [R]restart', x + 10, y + 44);
+    ctx.restore();
+  }
+
+  // ---- wire everything once the game globals exist --------------------
+  const poll = setInterval(() => {
+    if (typeof currentState === 'undefined' || typeof player === 'undefined' ||
+        typeof input === 'undefined' || typeof level === 'undefined' ||
+        typeof window.update !== 'function' || typeof window.render !== 'function') return;
+    clearInterval(poll);
+
+    // Capture the cause of death for telemetry.
+    let deathSeq = 0;
+    const _origDeath = window.playerDeath;
+    window.playerDeath = function (cause) {
+      deathSeq++;
+      window.__lastDeath = { cause: cause, x: player ? player.x : 0, seq: deathSeq };
+      return _origDeath.apply(this, arguments);
+    };
+
+    // Drive input before the core update; observe after.
+    const _origUpdate = window.update;
+    window.update = function (dt) {
+      if (Bot.on && !Bot.runFinished) tick(dt);
+      else if (Bot.on) driveMenu(currentState); // finished: still answer menus politely
+      _origUpdate.call(this, dt);
+      if (Bot.on) observe(dt);
+    };
+
+    // Draw the overlay on top of the finished frame.
+    const _origRender = window.render;
+    window.render = function () {
+      _origRender.call(this);
+      const now = performance.now();
+      if (Bot.lastFrameT) {
+        const fps = 1000 / Math.max(1, now - Bot.lastFrameT);
+        Bot.fpsEMA = Bot.fpsEMA * 0.9 + fps * 0.1;
+      }
+      Bot.lastFrameT = now;
+      if (Bot.on) renderOverlay();
+    };
+
+    // Controls: B toggle, R restart run.
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyB') {
+        Bot.on = !Bot.on;
+        if (!Bot.on) clearDriving();
+        console.log('%c[BOT] ' + (Bot.on ? 'ENABLED' : 'disabled'), 'color:#00FF88;font-weight:bold');
+      } else if (e.code === 'KeyR' && Bot.on) {
+        resetRun();
+      }
+    });
+
+    function resetRun() {
+      Bot.levels = []; Bot.cur = null; Bot.curIdx = -1; Bot.runStartTime = 0;
+      Bot.sawPlaying = false; Bot.runFinished = false; Bot.superState = 'none';
+      Bot.jumpHoldTimer = 0; Bot.stuckTimer = 0; Bot.deathSeen = 0; window.__lastDeath = null;
+      const panel = document.getElementById('botReportPanel'); if (panel) panel.remove();
+      currentLevelIndex = 0;
+      if (typeof titleScreen !== 'undefined') { titleScreen = new TitleScreen(); }
+      currentState = GameState.TITLE;
+      console.log('%c[BOT] Run reset', 'color:#00FF88');
+    }
+    Bot._reset = resetRun;
+
+    // Auto-enable via ?bot=1
+    if (/[?&]bot=1\b/.test(location.search)) {
+      Bot.on = true;
+      console.log('%c[BOT] Auto-enabled via ?bot=1 — playing & generating feedback…', 'color:#FFD700;font-weight:bold');
+    } else {
+      console.log('%c[BOT] Loaded. Press B to let the bot play & critique the game.', 'color:#888');
+    }
+  }, 120);
+})();
+  </script>
 </body>
 </html>
