@@ -7335,6 +7335,8 @@ class AudioManager {
   constructor() {
     this.ctx = null;
     this.enabled = true;
+    this.muted = false;
+    try { this.muted = localStorage.getItem('bullrun_muted') === '1'; } catch (e) { /* storage blocked */ }
     this.initialized = false;
     this.bgMusicPlaying = false;
     this._bgMusicTimeout = null;
@@ -7346,11 +7348,18 @@ class AudioManager {
     try {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : 1;
       this.masterGain.connect(this.ctx.destination);
       this.initialized = true;
     } catch (e) {
       this.enabled = false;
     }
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    try { localStorage.setItem('bullrun_muted', this.muted ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    if (this.masterGain) this.masterGain.gain.value = this.muted ? 0 : 1;
   }
 
   _playTone(frequency, duration, type, volume, delay) {
@@ -8361,7 +8370,8 @@ class World3D {
     document.body.insertBefore(this.canvas, document.body.firstChild);
 
     this.renderer = new T.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const mobile = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = T.PCFSoftShadowMap;
     this.maxAniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
@@ -8387,7 +8397,7 @@ class World3D {
     this.ambient = new T.AmbientLight(0xffffff, 0.5);
     this.sun = new T.DirectionalLight(0xffffff, 2);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
     const sc = this.sun.shadow.camera;
     sc.left = -1000; sc.right = 1000; sc.top = 800; sc.bottom = -800;
     sc.near = 50; sc.far = 4000;
@@ -8977,7 +8987,7 @@ class World3D {
       case 'desk':
         D = 72;
         this.addBox(g, this.boxGeo(w, h, D, 128), M.box, 0, 0, w, h, 0, D);
-        for (const lx of [4, w - 10]) for (const z of [-4, -D + 10]) {
+        for (const lx of [4, w - 10]) for (const z of [-20, -D + 10]) {
           this.addBox(g, new T.BoxGeometry(6, 18, 6), M.leg, lx, h, 6, 18, z, 6);
         }
         break;
@@ -9002,9 +9012,9 @@ class World3D {
         this.addBox(g, this.boxGeo(w + 8, 6, D + 8, 128), M.cap, -4, 0, w + 8, 6, 0, D + 8);
         this.addBox(g, this.boxGeo(w, h - 6, D, 128), M.box, 0, 6, w, h - 6, 0, D);
         const shaftLen = y + h < W3D_GROUND_Y ? W3D_GROUND_Y - (y + h) : 40;
-        const r = Math.min(w * 0.32, D * 0.42);
+        const r = Math.min(w * 0.32, 24);
         const shaft = new T.Mesh(new T.CylinderGeometry(r, r * 1.05, shaftLen, 20), M.shaft);
-        shaft.position.set(w / 2, -(h + shaftLen / 2), -D / 2);
+        shaft.position.set(w / 2, -(h + shaftLen / 2), -(20 + r)); // behind the player's depth
         shaft.castShadow = shaft.receiveShadow = true;
         g.add(shaft);
         break;
@@ -9791,10 +9801,18 @@ let marketCrashActive = false;
 let marketCrashTimer = 0;
 let marketCrashShakeOffset = { x: 0, y: 0 };
 let diamondSpawnTimer = 0;
+let diamondSpawnDelay = 35 + Math.random() * 20;
 let dhTickTimer = 0;
 
 // Level system
 let currentLevelIndex = 0;
+let goalLockedHintTimer = 0;
+
+// Pause (P / Esc, auto-pauses when the tab is hidden)
+let gamePaused = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && currentState === GameState.PLAYING) gamePaused = true;
+});
 
 // ==========================================
 //  Canvas setup
@@ -9836,7 +9854,10 @@ function startGame(characterType, levelIndex) {
   marketCrashTimer = 0;
   marketCrashShakeOffset = { x: 0, y: 0 };
   diamondSpawnTimer = 0;
+  diamondSpawnDelay = 35 + Math.random() * 20;
   dhTickTimer = 0;
+  flashCrashTimer = 0;
+  gamePaused = false;
   leaderboard.resetSession();
 
   // Wire up question block callbacks
@@ -9883,6 +9904,22 @@ function update(dt) {
   // Debug mode toggle
   if (input.wasPressed('F1') || input.wasPressed('Backquote')) {
     debugMode = !debugMode;
+  }
+
+  // Mute toggle (M) works everywhere
+  if (input.wasPressed('KeyM')) audio.toggleMute();
+
+  if (currentState === GameState.PLAYING) {
+    if (input.wasPressed('KeyP') || input.wasPressed('Escape')) {
+      gamePaused = !gamePaused;
+    } else if (gamePaused && (input.wasPressed('Enter') || input.wasPressed('Space'))) {
+      gamePaused = false; // also resumes from a touch tap
+    }
+    if (gamePaused) {
+      input.clearFrameState();
+      touchControls.update(dt, currentState);
+      return;
+    }
   }
 
   switch (currentState) {
@@ -10033,6 +10070,7 @@ function updatePlaying(dt) {
   // Player vs enemies collision
   if (!player.deathAnimating) {
     for (const enemy of level.enemies) {
+      if (player.deathAnimating) break; // already died this frame
       if (!enemy.alive) continue;
       if (!aabbOverlap(player, enemy)) continue;
 
@@ -10107,7 +10145,7 @@ function updatePlaying(dt) {
   // Player vs collectibles
   for (let i = level.collectibles.length - 1; i >= 0; i--) {
     const c = level.collectibles[i];
-    if (c.collected) continue;
+    if (c.collected || c.type === 'redCandle') continue; // hazards are handled below
     if (!aabbOverlap(player, c)) continue;
 
     c.collected = true;
@@ -10266,8 +10304,9 @@ function updatePlaying(dt) {
 
   // Spawn running diamond every 35-55 seconds
   diamondSpawnTimer += dt;
-  if (diamondSpawnTimer >= 35 + Math.random() * 20) {
+  if (diamondSpawnTimer >= diamondSpawnDelay) {
     diamondSpawnTimer = 0;
+    diamondSpawnDelay = 35 + Math.random() * 20;
     // Spawn from right side of screen, bouncing left toward player
     const spawnX = player.x + CONFIG.VIRTUAL_WIDTH + 40;
     const spawnY = 380;
@@ -10425,9 +10464,18 @@ function updatePlaying(dt) {
 
   // Goal check
   const goal = level.goalPosition;
-  if (!player.deathAnimating &&
+  const atGoal = !player.deathAnimating &&
       Math.abs(player.x + player.width / 2 - goal.x - 24) < 50 &&
-      Math.abs(player.y + player.height / 2 - goal.y - 20) < 50) {
+      Math.abs(player.y + player.height / 2 - goal.y - 20) < 50;
+  const bossBlocking = level.boss && level.boss.alive;
+  if (atGoal && bossBlocking) {
+    goalLockedHintTimer -= dt;
+    if (goalLockedHintTimer <= 0) {
+      goalLockedHintTimer = 2;
+      floatingText.spawn(goal.x + 24, goal.y - 30, 'DEFEAT THE WHALE FIRST!', CONFIG.COLORS.TICKER_RED, 20, 1.5);
+    }
+  }
+  if (atGoal && !bossBlocking) {
     audio.playLevelComplete();
     // Calculate time bonus: faster = more points
     const timeBonus = Math.max(0, Math.round(5000 - levelTime * 50));
@@ -10553,8 +10601,14 @@ function updateLevelComplete(dt) {
       player.crouching = false;
       player.crouchTimer = 0;
       player.superJumpReady = false;
+      player.rocketBoostTimer = 0;
+      player.landSquashTimer = 0;
       diamondSpawnTimer = 0;
+      diamondSpawnDelay = 35 + Math.random() * 20;
       dhTickTimer = 0;
+      flashCrashTimer = 0;
+      deathPauseTimer = 0;
+      marginCallShown = false;
       camera = new Camera(CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
       camera.levelWidth = level.width;
       camera.levelHeight = level.height;
@@ -10629,6 +10683,7 @@ function render() {
 
     case GameState.PLAYING:
       renderPlaying();
+      if (gamePaused) renderPauseOverlay();
       break;
 
     case GameState.GAME_OVER:
@@ -10646,6 +10701,20 @@ function render() {
 
   // Touch controls overlay (drawn in screen-space, outside game viewport transform)
   touchControls.render(ctx, canvas.width, canvas.height, currentState);
+}
+
+function renderPauseOverlay() {
+  const w = CONFIG.VIRTUAL_WIDTH, h = CONFIG.VIRTUAL_HEIGHT;
+  ctx.fillStyle = 'rgba(5, 5, 20, 0.6)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
+  ctx.font = 'bold 54px sans-serif';
+  ctx.fillText('TRADING HALTED', w / 2, h / 2 - 30);
+  ctx.fillStyle = '#c8c8e0';
+  ctx.font = '18px sans-serif';
+  ctx.fillText('Press P, Esc, Enter or tap to resume  ·  M to ' + (audio.muted ? 'unmute' : 'mute'), w / 2, h / 2 + 24);
 }
 
 // Neon meme billboard on a pole (decorative, behind gameplay)
