@@ -24,11 +24,25 @@
       display: block;
       touch-action: none;
     }
+    #gameCanvas {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 1;
+    }
+    /* 3D world layer, sized to the letterboxed game viewport underneath the 2D canvas */
+    #world3d {
+      position: fixed;
+      z-index: 0;
+      pointer-events: none;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
   <script>
 // Math.clamp polyfill
 Math.clamp = Math.clamp || function(val, min, max) {
@@ -3707,6 +3721,13 @@ class Player {
       ctx.fillText('\u25B2', screenX + this.width / 2, screenY - 8 + bounce);
     }
 
+    // The body itself is a 3D model when the 3D layer is active; the effects
+    // above (flames, auras, indicators) stay 2D.
+    if (typeof world3d !== 'undefined' && world3d && world3d.active) {
+      ctx.restore();
+      return;
+    }
+
     // Squash & stretch: stretch along velocity in the air, squash on hard landings
     if (!this.deathAnimating && !this.crouching) {
       let squashX = 1, squashY = 1;
@@ -6183,15 +6204,23 @@ class TitleScreen {
     ctx.lineWidth = selected ? 3 : 2;
     ctx.stroke();
 
-    // Character sprite, scaled up (gentle bob when selected)
-    const scale = 1.6 + (selected ? Math.sin(this.animTime * 6) * 0.04 : 0);
-    const spriteW = 36 * scale;
-    ctx.save();
-    ctx.translate(x + cw / 2 - spriteW / 2, y + 14);
-    ctx.scale(scale, scale);
-    if (idx === 0) this._drawMiniChad(ctx, 0, 0);
-    else this._drawMiniDiana(ctx, 0, 0);
-    ctx.restore();
+    // Character: 3D portrait when WebGL is available, else the 2D sprite
+    if (typeof world3d !== 'undefined' && world3d) {
+      const img = world3d.portrait(idx === 0 ? 'chad' : 'diana', selected, this.animTime);
+      ctx.save();
+      ctx.globalAlpha = selected ? 1 : 0.7;
+      ctx.drawImage(img, x + cw / 2 - 60, y + 2, 120, 110);
+      ctx.restore();
+    } else {
+      const scale = 1.6 + (selected ? Math.sin(this.animTime * 6) * 0.04 : 0);
+      const spriteW = 36 * scale;
+      ctx.save();
+      ctx.translate(x + cw / 2 - spriteW / 2, y + 14);
+      ctx.scale(scale, scale);
+      if (idx === 0) this._drawMiniChad(ctx, 0, 0);
+      else this._drawMiniDiana(ctx, 0, 0);
+      ctx.restore();
+    }
 
     // Name / flavor / input hint
     ctx.fillStyle = selected ? CONFIG.COLORS.BULL_GOLD : '#cccccc';
@@ -7306,6 +7335,8 @@ class AudioManager {
   constructor() {
     this.ctx = null;
     this.enabled = true;
+    this.muted = false;
+    try { this.muted = localStorage.getItem('bullrun_muted') === '1'; } catch (e) { /* storage blocked */ }
     this.initialized = false;
     this.bgMusicPlaying = false;
     this._bgMusicTimeout = null;
@@ -7317,11 +7348,18 @@ class AudioManager {
     try {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : 1;
       this.masterGain.connect(this.ctx.destination);
       this.initialized = true;
     } catch (e) {
       this.enabled = false;
     }
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    try { localStorage.setItem('bullrun_muted', this.muted ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    if (this.masterGain) this.masterGain.gain.value = this.muted ? 0 : 1;
   }
 
   _playTone(frequency, duration, type, volume, delay) {
@@ -7965,11 +8003,1760 @@ class AudioManager {
   </script>
   <script>
 // ==========================================
+//  3D WORLD RENDERER (Three.js)
+// ==========================================
+// Renders the level geometry and themed backdrops as a real 3D scene on a
+// WebGL canvas that sits underneath the 2D game canvas. Gameplay is still
+// 2D: the perspective camera is placed so the z = 0 plane maps exactly onto
+// the 960x540 virtual viewport, so every block's front face lines up pixel
+// for pixel with the collision boxes, while depth (tops, sides, parallax,
+// lighting, shadows) comes for free. Sprites, HUD and FX stay on the 2D
+// canvas on top. If WebGL or Three.js is unavailable, the game falls back to
+// the original 2D renderer.
+
+const W3D_FOV = 50;
+const W3D_GROUND_Y = 432;
+
+// Seeded RNG so a level's backdrop is identical every time it's built
+function w3dRng(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const W3D_THEMES = {
+  nightCity: {
+    sky: ['#05051e', '#151540', '#3a2f5e'], fog: '#2a2550', fogNear: 1600, fogFar: 7000,
+    hemi: ['#8a9cff', '#2a1a2a', 1.6], ambient: ['#404070', 0.7], sun: ['#d6deff', 2.6],
+  },
+  launchPad: {
+    sky: ['#020210', '#0a0a2a', '#3a1a48'], fog: '#2a1636', fogNear: 1800, fogFar: 8000,
+    hemi: ['#a090ff', '#301830', 1.5], ambient: ['#403050', 0.7], sun: ['#ffe6cc', 2.8],
+  },
+  tradingFloor: {
+    sky: ['#1a1000', '#3a2a10', '#5a4424'], fog: '#3a2814', fogNear: 1400, fogFar: 5200,
+    hemi: ['#ffd49a', '#3a2410', 1.7], ambient: ['#5a4020', 0.8], sun: ['#ffe0b0', 2.4],
+  },
+  cryptoMines: {
+    sky: ['#06001a', '#150030', '#1a0a3a'], fog: '#160030', fogNear: 1100, fogFar: 4600,
+    hemi: ['#a070ff', '#100020', 1.5], ambient: ['#30205a', 0.8], sun: ['#cbb0ff', 2.0],
+  },
+};
+
+// ==========================================
+//  3D PLAYER CHARACTERS (Chad & Diana)
+// ==========================================
+// Articulated low-poly models built from primitives. Units match the game:
+// 54 tall standing (PLAYER_HEIGHT), feet at y = 0, facing local +z.
+// Pivots: hips -> knees, shoulders -> elbows, so poses are just rotations.
+class Investor3D {
+  constructor(type) {
+    const T = THREE;
+    this.type = type;
+    const chad = type === 'chad';
+    const std = (color, extra) => new T.MeshStandardMaterial(Object.assign({ color, roughness: 0.6 }, extra || {}));
+    const M = this.mats = {
+      skin: std(0xf2c79a, { roughness: 0.55 }),
+      suit: std(chad ? 0x1c1c48 : 0x34306e, { roughness: 0.5 }),
+      suitLight: std(chad ? 0x2a2a62 : 0x4a4590, { roughness: 0.45 }),
+      pants: std(chad ? 0x15152e : 0x1e1a40, { roughness: 0.6 }),
+      shoe: std(chad ? 0x111111 : 0x5a1020, { roughness: 0.25, metalness: 0.3 }),
+      shirt: std(chad ? 0xf4f4f8 : 0xece2d0, { roughness: 0.7 }),
+      tie: std(0xc8102e, { roughness: 0.4 }),
+      hair: std(chad ? 0x2a2018 : 0x8b4513, { roughness: 0.45, metalness: 0.05 }),
+      white: std(0xffffff, { roughness: 0.3 }),
+      pupil: std(chad ? 0x2a4a7a : 0x3a6a3a, { roughness: 0.2 }),
+      dark: std(0x1a1010, { roughness: 0.5 }),
+      lip: std(chad ? 0x9a5040 : 0xc0405a, { roughness: 0.4 }),
+      gold: std(0xffd700, { roughness: 0.25, metalness: 0.9 }),
+      leather: std(0x7a5212, { roughness: 0.5 }),
+      tabletBody: std(0x22222a, { roughness: 0.3, metalness: 0.6 }),
+      screen: new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+      headband: std(0xcc0000, { roughness: 0.5 }),
+    };
+    this.allMats = Object.values(M);
+
+    const root = this.root = new T.Group();      // positioned/scaled by caller
+    const body = this.body = new T.Group();      // bobs/leans
+    root.add(body);
+    const mesh = (geo, mat, x, y, z, parent) => {
+      const m = new T.Mesh(geo, mat);
+      m.position.set(x || 0, y || 0, z || 0);
+      m.castShadow = true;
+      (parent || body).add(m);
+      return m;
+    };
+
+    // ---- Legs (hip -> knee pivots) ----
+    this.legs = [];
+    for (const side of [-1, 1]) {
+      const hip = new T.Group();
+      hip.position.set(side * 4.3, 19.3, 0);
+      body.add(hip);
+      mesh(new T.CapsuleGeometry(3.3, 6, 4, 10), M.pants, 0, -5, 0, hip);
+      const knee = new T.Group();
+      knee.position.set(0, -9.5, 0);
+      hip.add(knee);
+      mesh(new T.SphereGeometry(3.15, 10, 8), M.pants, 0, 0, 0, knee);
+      mesh(new T.CapsuleGeometry(3.0, 5.5, 4, 10), M.pants, 0, -4.5, 0, knee);
+      const shoe = mesh(new T.CapsuleGeometry(2.8, 5, 4, 10), M.shoe, 0, -8.0, 1.8, knee);
+      shoe.rotation.x = Math.PI / 2;
+      shoe.scale.set(1.05, 1, 0.8);
+      if (!chad) mesh(new T.CylinderGeometry(0.8, 0.6, 3, 6), M.shoe, 0, -10, -1.8, knee); // heel
+      this.legs.push({ hip, knee });
+    }
+
+    // ---- Torso ----
+    const torso = this.torso = new T.Group();
+    torso.position.y = 18;
+    body.add(torso);
+    const jacket = mesh(new T.CapsuleGeometry(6.4, 7.5, 6, 16), M.suit, 0, 10, 0, torso);
+    jacket.scale.set(1.38, 1, 0.92);
+    // shirt V, tie / blouse, lapels, buttons on the chest (front = +z)
+    const vee = mesh(new T.ConeGeometry(4.2, 9, 3), M.shirt, 0, 14.2, 5.6, torso);
+    vee.rotation.set(Math.PI, 0, 0);
+    vee.scale.set(1, 1, 0.35);
+    for (const side of [-1, 1]) {
+      const lapel = mesh(new T.BoxGeometry(2.6, 10, 0.9), M.suitLight, side * 3.3, 13.4, 5.9, torso);
+      lapel.rotation.z = -side * 0.38;
+      lapel.rotation.x = -0.12;
+    }
+    if (chad) {
+      mesh(new T.BoxGeometry(2.0, 1.6, 1.2), M.tie, 0, 17.6, 6.2, torso);           // knot
+      const tie = mesh(new T.ConeGeometry(1.7, 9, 4), M.tie, 0, 12.4, 6.4, torso);
+      tie.rotation.set(Math.PI, Math.PI / 4, 0);
+      tie.scale.set(1, 1, 0.35);
+      mesh(new T.BoxGeometry(2.8, 0.7, 0.8), M.gold, 0, 13.5, 6.7, torso);          // tie bar
+    } else {
+      // pearl necklace
+      for (let i = 0; i < 9; i++) {
+        const a = Math.PI * (0.15 + 0.7 * i / 8);
+        mesh(new T.SphereGeometry(0.55, 8, 6), M.white, Math.cos(a) * 3.4, 17.8 - Math.sin(a) * 2.6, 5.9 - Math.abs(Math.cos(a)) * 1.2, torso);
+      }
+    }
+    for (const by of [7.5, 4.2]) mesh(new T.SphereGeometry(0.6, 8, 6), M.gold, 0.2, by, 6.0, torso);
+    // pocket square / belt
+    if (chad) mesh(new T.ConeGeometry(1.1, 1.6, 3), M.shirt, -5.6, 12.6, 5.3, torso);
+    mesh(new T.CylinderGeometry(6.6, 6.6, 1.4, 16), chad ? M.dark : M.gold, 0, 1.3, 0, torso).scale.set(1.35, 1, 0.9);
+
+    // ---- Arms (shoulder -> elbow pivots) ----
+    this.arms = [];
+    for (const side of [-1, 1]) {
+      const sh = new T.Group();
+      sh.position.set(side * 9.6, 17, 0);
+      torso.add(sh);
+      mesh(new T.SphereGeometry(3.2, 12, 8), M.suit, 0, 0, 0, sh);                   // shoulder pad
+      mesh(new T.CapsuleGeometry(2.5, 5, 4, 10), M.suit, 0, -4.3, 0, sh);
+      const elbow = new T.Group();
+      elbow.position.set(0, -8.4, 0);
+      sh.add(elbow);
+      mesh(new T.SphereGeometry(2.45, 10, 8), M.suit, 0, 0, 0, elbow);
+      mesh(new T.CapsuleGeometry(2.3, 4.5, 4, 10), M.suit, 0, -3.6, 0, elbow);
+      mesh(new T.CylinderGeometry(2.1, 2.1, 1, 10), M.shirt, 0, -6.9, 0, elbow);       // cuff
+      const hand = mesh(new T.SphereGeometry(2.2, 12, 8), M.skin, 0, -8.6, 0.3, elbow);
+      hand.scale.set(0.95, 1.1, 0.9);
+      this.arms.push({ sh, elbow, hand, side });
+    }
+
+    // Props in the right hand (side = +1 -> model's left from viewer; use index 1)
+    const holder = new T.Group();
+    holder.position.set(0, -9.5, 0.5);
+    this.arms[1].elbow.add(holder);
+    if (chad) {
+      mesh(new T.BoxGeometry(2.2, 8.5, 11), M.leather, 0, -5.4, 0, holder);
+      mesh(new T.BoxGeometry(2.4, 1.2, 11.2), M.gold, 0, -2.4, 0, holder);
+      mesh(new T.BoxGeometry(2.6, 1.2, 1.6), M.gold, 0, -3.4, 0, holder);
+      const handle = mesh(new T.TorusGeometry(1.6, 0.45, 6, 12, Math.PI), M.dark, 0, -1.2, 0, holder);
+      handle.rotation.y = Math.PI / 2;
+    } else {
+      const tablet = new T.Group();
+      tablet.position.set(0, -2.5, 3.2);
+      tablet.rotation.x = -0.9;
+      holder.add(tablet);
+      mesh(new T.BoxGeometry(9, 12, 0.8), M.tabletBody, 0, 0, 0, tablet);
+      for (const face of [1, -1]) {            // screen on both faces so it always reads
+        const scr = mesh(new T.PlaneGeometry(8, 10.6), M.screen, 0, 0, 0.45 * face, tablet);
+        if (face < 0) scr.rotation.y = Math.PI;
+        scr.castShadow = false;
+      }
+    }
+
+    // ---- Head ----
+    const head = this.head = new T.Group();
+    head.position.y = 37.5;
+    body.add(head);
+    mesh(new T.CylinderGeometry(2.4, 2.8, 3.5, 10), M.skin, 0, 0.6, 0, head);         // neck
+    mesh(new T.CylinderGeometry(3.6, 3.2, 1.8, 12), M.shirt, 0, -0.4, 0.2, head);      // collar
+    const skull = mesh(new T.SphereGeometry(8.6, 24, 18), M.skin, 0, 8.5, 0.4, head);
+    skull.scale.set(1.0, 1.03, 0.98);
+    const jaw = mesh(new T.SphereGeometry(6.8, 18, 12), M.skin, 0, 5.4, 1.6, head);
+    jaw.scale.set(chad ? 1.05 : 0.95, 0.85, 0.95);
+    for (const side of [-1, 1]) {
+      mesh(new T.SphereGeometry(1.9, 10, 8), M.skin, side * 8.4, 8, 0, head).scale.set(0.5, 1, 0.8); // ears
+      const ew = mesh(new T.SphereGeometry(1.75, 12, 10), M.white, side * 3.2, 9.4, 7.3, head);
+      ew.scale.set(1, chad ? 0.9 : 1.15, 0.6);
+      mesh(new T.SphereGeometry(1.0, 10, 8), M.pupil, side * 3.2, 9.3, 8.25, head);
+      mesh(new T.SphereGeometry(0.45, 6, 6), M.dark, side * 3.2, 9.3, 8.85, head);
+      mesh(new T.SphereGeometry(0.3, 6, 6), M.white, side * 3.2 + 0.35, 9.8, 9.0, head); // eye glint
+      const brow = mesh(new T.BoxGeometry(3.4, chad ? 0.9 : 0.55, 0.8), chad ? M.hair : M.dark, side * 3.3, 11.9, 7.6, head);
+      brow.rotation.z = side * (chad ? -0.12 : -0.2);
+      if (!chad) {
+        const lash = mesh(new T.BoxGeometry(3.2, 0.5, 0.5), M.dark, side * 3.3, 10.8, 8.0, head);
+        lash.rotation.z = side * -0.25;
+        mesh(new T.SphereGeometry(0.6, 8, 6), M.gold, side * 8.5, 5.6, 0.6, head);   // earrings
+      }
+    }
+    mesh(new T.SphereGeometry(1.1, 10, 8), M.skin, 0, 7.6, 8.6, head).scale.set(0.9, 1.1, 1);  // nose
+    const smile = mesh(new T.TorusGeometry(2.3, chad ? 0.42 : 0.5, 6, 14, Math.PI * 0.85), M.lip, 0, 5.4, 7.6, head);
+    smile.rotation.z = Math.PI + Math.PI * 0.075;
+    smile.rotation.x = -0.25;
+
+    // Hair
+    if (chad) {
+      const cap = mesh(new T.SphereGeometry(9.1, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.45), M.hair, 0, 9.3, -0.6, head);
+      cap.scale.set(1.02, 1.0, 1.05);
+      cap.rotation.x = -0.28;
+      const back = mesh(new T.SphereGeometry(8.9, 20, 12, Math.PI * 0.5, Math.PI, Math.PI * 0.2, Math.PI * 0.45), M.hair, 0, 8.6, -0.9, head);
+      back.rotation.y = Math.PI;
+      const quiff = mesh(new T.SphereGeometry(4.2, 16, 10), M.hair, 1.0, 16.2, 4.2, head);
+      quiff.scale.set(1.5, 0.62, 0.9);
+      quiff.rotation.z = -0.18;
+      for (const side of [-1, 1]) mesh(new T.BoxGeometry(1.4, 4.2, 3.4), M.hair, side * 8.3, 10.2, 1.2, head); // sideburns
+    } else {
+      const cap = mesh(new T.SphereGeometry(9.5, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.5), M.hair, 0, 8.8, -0.6, head);
+      cap.scale.set(1.04, 1.05, 1.06);
+      cap.rotation.x = -0.48;
+      const fall = mesh(new T.CapsuleGeometry(8.6, 8, 6, 16), M.hair, 0, 4.4, -4.5, head);   // long hair behind
+      fall.scale.set(1.06, 1, 0.6);
+      for (const side of [-1, 1]) {
+        const strand = mesh(new T.CapsuleGeometry(2.4, 11, 4, 10), M.hair, side * 7.8, 5.2, 2.6, head);
+        strand.rotation.z = side * -0.08;
+        const curl = mesh(new T.SphereGeometry(2.7, 10, 8), M.hair, side * 7.4, -1.6, 3.0, head);
+        curl.scale.set(1.1, 0.8, 1);
+      }
+      const fringe = mesh(new T.SphereGeometry(4.6, 16, 10), M.hair, -2.4, 14.6, 5.4, head);
+      fringe.scale.set(1.55, 0.6, 0.75);
+      fringe.rotation.z = 0.32;
+    }
+
+    // Lucky headband + cat ears (shown when hasHeadband)
+    const hb = this.headband = new T.Group();
+    hb.position.y = 13.6;
+    head.add(hb);
+    const band = mesh(new T.TorusGeometry(9.2, 1.0, 6, 28), M.headband, 0, 0, 0.3, hb);
+    band.rotation.x = Math.PI / 2;
+    for (const side of [-1, 1]) {
+      const ear = mesh(new T.ConeGeometry(2.8, 5.5, 4), M.headband, side * 5.6, 4.0, -0.5, hb);
+      ear.rotation.z = side * -0.35;
+      const tail = mesh(new T.CapsuleGeometry(0.7, 6, 3, 6), M.headband, side * 1.6, -2.6, -9.4, hb);
+      tail.rotation.x = 0.9;
+      tail.rotation.z = side * 0.3;
+    }
+    hb.visible = false;
+
+    if (!chad) this._buildTabletScreen();
+  }
+
+  _buildTabletScreen() {
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 128;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0b1e3a'; g.fillRect(0, 0, 96, 128);
+    g.fillStyle = '#4488FF'; g.fillRect(0, 0, 96, 18);
+    g.fillStyle = '#fff'; g.font = 'bold 12px sans-serif'; g.fillText('DIV ▲', 6, 13);
+    g.strokeStyle = '#00FF88'; g.lineWidth = 4; g.beginPath();
+    g.moveTo(6, 110); g.lineTo(26, 92); g.lineTo(44, 98); g.lineTo(64, 64); g.lineTo(90, 36); g.stroke();
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    this.mats.screen.map = t;
+    this.screenTex = t;
+  }
+
+  dispose() {
+    this.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    for (const m of this.allMats) m.dispose();
+    if (this.screenTex) this.screenTex.dispose();
+  }
+
+  // Pose the rig. p: { state, t, vy, onGround, crouching, dead, deadT, headband, powered }
+  pose(p) {
+    const t = p.t;
+    const L = this.legs, A = this.arms;
+    let hipL = 0, hipR = 0, kneeL = 0, kneeR = 0;
+    let shL = 0, shR = 0, elL = -0.15, elR = -0.15, armOutL = 0.12, armOutR = 0.12;
+    let bob = 0, lean = 0, headTilt = 0, headTurn = 0, spin = 0;
+
+    if (p.dead) {
+      shL = shR = -2.8; armOutL = armOutR = 0.5; elL = elR = -0.2;
+      hipL = -0.5; hipR = 0.4; kneeL = 0.8; kneeR = 0.6;
+      spin = p.deadT * 9;
+      headTilt = -0.3;
+    } else if (p.crouching) {
+      hipL = hipR = -1.25; kneeL = kneeR = 2.0;
+      shL = shR = -0.5; elL = elR = -1.1;
+      lean = 0.45; bob = -8.5;
+      headTilt = -0.25;
+      if (p.state === 'crouch_ready') bob += Math.sin(t * 30) * 0.4;
+    } else if (!p.onGround) {
+      if (p.vy < 0) {         // rising: tuck one knee, punch the sky
+        hipL = -1.3; kneeL = 1.5; hipR = 0.35; kneeR = 0.5;
+        shL = -2.7; elL = -0.3; shR = 0.6; elR = -0.9;
+        lean = -0.05; headTilt = -0.15;
+      } else {                // falling: flail a little
+        const f = Math.sin(t * 14) * 0.25;
+        hipL = -0.5 + f; kneeL = 0.7; hipR = 0.2 - f; kneeR = 0.4;
+        shL = -0.4; shR = -0.4; armOutL = armOutR = 1.15 + f;
+        elL = elR = -0.4;
+        headTilt = 0.1;
+      }
+    } else if (p.state === 'running') {
+      const ph = t * 12;
+      const s = Math.sin(ph);
+      hipL = s * 0.85; hipR = -s * 0.85;
+      kneeL = Math.max(0, -Math.cos(ph)) * 1.3 + 0.15;
+      kneeR = Math.max(0, Math.cos(ph)) * 1.3 + 0.15;
+      shL = -s * 0.9; shR = s * 0.9;
+      elL = elR = -1.0;
+      bob = Math.abs(Math.cos(ph)) * 1.6 - 0.6;
+      lean = 0.18;
+      headTilt = 0.05;
+    } else {                  // idle: breathe, glance around
+      const b = Math.sin(t * 2.2);
+      bob = b * 0.35;
+      shL = 0.05 + b * 0.04; shR = -0.05 - b * 0.04;
+      headTurn = Math.sin(t * 0.7) * 0.25;
+      headTilt = Math.sin(t * 1.1) * 0.05;
+      if (this.type === 'diana') { shR = -0.55; elR = -1.3; } // looking at her tablet
+    }
+
+    L[0].hip.rotation.x = hipL; L[0].knee.rotation.x = kneeL;
+    L[1].hip.rotation.x = hipR; L[1].knee.rotation.x = kneeR;
+    A[0].sh.rotation.set(shL, 0, -armOutL);
+    A[1].sh.rotation.set(shR, 0, armOutR);
+    A[0].elbow.rotation.x = elL;
+    A[1].elbow.rotation.x = elR;
+    this.body.position.y = bob;
+    this.torso.rotation.x = lean;
+    this.head.rotation.set(headTilt - lean * 0.5, headTurn, 0);
+    this.body.rotation.y = spin;
+    this.headband.visible = !!p.headband;
+    const e = p.powered ? 0.35 + Math.sin(t * 6) * 0.15 : 0;
+    this.mats.suit.emissive.setRGB(0, e * 0.8, e * 0.4);
+    this.mats.suitLight.emissive.setRGB(0, e * 0.8, e * 0.4);
+  }
+}
+
+class World3D {
+  static create() {
+    if (typeof THREE === 'undefined') {
+      console.warn('[3D] Three.js not loaded, using 2D renderer');
+      return null;
+    }
+    try {
+      return new World3D();
+    } catch (e) {
+      console.warn('[3D] WebGL unavailable, using 2D renderer:', e);
+      return null;
+    }
+  }
+
+  constructor() {
+    const T = THREE;
+    this.canvas = document.createElement('canvas');
+    this.canvas.id = 'world3d';
+    document.body.insertBefore(this.canvas, document.body.firstChild);
+
+    this.renderer = new T.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
+    const mobile = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+    this.maxAniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+
+    this.scene = new T.Scene();
+    this.cam = new T.PerspectiveCamera(W3D_FOV, CONFIG.VIRTUAL_WIDTH / CONFIG.VIRTUAL_HEIGHT, 10, 14000);
+    // Distance at which the z = 0 plane fills the virtual viewport exactly
+    this.camDist = (CONFIG.VIRTUAL_HEIGHT / 2) / Math.tan(T.MathUtils.degToRad(W3D_FOV / 2));
+
+    this.textures = {};   // shared across levels
+    this.materials = {};  // shared across levels
+    this.levelTextures = []; // per-level, disposed on rebuild
+    this.levelRef = null;
+    this.root = null;
+    this.tickers = [];    // per-frame animation callbacks for the current level
+    this.dynamics = [];   // moving platforms / question blocks
+    this.active = false;
+    this.rect = { x: -1, y: -1, w: 0, h: 0 };
+    this.camX = 0;
+    this.camY = 0;
+
+    this.hemi = new T.HemisphereLight(0xffffff, 0x222222, 1);
+    this.ambient = new T.AmbientLight(0xffffff, 0.5);
+    this.sun = new T.DirectionalLight(0xffffff, 2);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
+    const sc = this.sun.shadow.camera;
+    sc.left = -1000; sc.right = 1000; sc.top = 800; sc.bottom = -800;
+    sc.near = 50; sc.far = 4000;
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 1.5;
+    // Soft fill from the camera side so characters and front faces read clearly
+    this.fill = new T.DirectionalLight(0xfff4e8, 0.9);
+    this.scene.add(this.hemi, this.ambient, this.sun, this.sun.target, this.fill, this.fill.target);
+  }
+
+  // ------------------------------------------------------------
+  //  Frame entry points
+  // ------------------------------------------------------------
+  setActive(on) {
+    if (on === this.active) return;
+    this.active = on;
+    this.canvas.style.display = on ? 'block' : 'none';
+  }
+
+  layout(x, y, w, h) {
+    const r = this.rect;
+    if (r.x === x && r.y === y && r.w === w && r.h === h) return;
+    this.rect = { x, y, w, h };
+    this.renderer.setSize(w, h, false);
+    const s = this.canvas.style;
+    s.left = x + 'px'; s.top = y + 'px'; s.width = w + 'px'; s.height = h + 'px';
+  }
+
+  // Keeps the 3D investor in sync with the gameplay Player each frame
+  syncPlayer(player, time, dt) {
+    if (!player) { if (this.investor) this.investor.root.visible = false; return; }
+    if (!this.investor || this.investor.type !== player.characterType) {
+      if (this.investor) { this.scene.remove(this.investor.root); this.investor.dispose(); }
+      this.investor = new Investor3D(player.characterType);
+      this.scene.add(this.investor.root);
+      this.facing = player.facingRight ? 1 : -1;
+    }
+    const inv = this.investor;
+    const r = inv.root;
+    const flicker = player.damageInvTimer > 0 && Math.floor(player.damageInvTimer * 10) % 2 === 0 && !player.deathAnimating;
+    r.visible = !flicker;
+
+    const standH = player._getStandingHeight();
+    const k = player.width / CONFIG.PLAYER_WIDTH;
+    let sx = k, sy = standH / CONFIG.PLAYER_HEIGHT;
+    if (player.crouching) { sy *= 0.82; sx *= 1.08; }
+    else if (!player.deathAnimating) {
+      if (player.landSquashTimer > 0 && player.onGround) {
+        const q = player.landSquashTimer / 0.12;
+        sx *= 1 + 0.16 * q; sy *= 1 - 0.2 * q;
+      } else if (!player.onGround) {
+        const st = Math.min(Math.abs(player.vy) / 900, 1) * 0.1;
+        sy *= 1 + st; sx *= 1 - st * 0.6;
+      }
+    }
+    r.scale.set(sx, sy, sx);
+    // Stand slightly behind the gameplay plane so feet sit on the ground top
+    r.position.set(player.x + player.width / 2, -(player.y + player.height), -8);
+    // 3/4 view toward the camera, turning smoothly when changing direction
+    const target = player.facingRight ? 1 : -1;
+    this.facing += (target - this.facing) * Math.min(1, dt * 14);
+    r.rotation.y = this.facing * 0.62;
+
+    inv.pose({
+      state: player.state, t: player.animTime, vy: player.vy, onGround: player.onGround,
+      crouching: player.crouching, dead: player.deathAnimating, deadT: player.deathAnimTimer,
+      headband: player.hasHeadband, powered: player.powered,
+    });
+  }
+
+  // Character-select portrait, rendered on a small offscreen renderer and
+  // returned as a canvas for the 2D title screen to draw.
+  portrait(type, selected, time) {
+    const T = THREE;
+    if (!this.pr) {
+      const c = document.createElement('canvas');
+      const r = new T.WebGLRenderer({ canvas: c, antialias: true, alpha: true, preserveDrawingBuffer: true });
+      r.setPixelRatio(1);
+      r.setSize(360, 330, false);
+      r.setClearColor(0x000000, 0);
+      const scene = new T.Scene();
+      scene.add(new T.HemisphereLight(0xb8c4ff, 0x302040, 1.6));
+      const key = new T.DirectionalLight(0xfff0dd, 2.6);
+      key.position.set(40, 80, 90);
+      const rim = new T.DirectionalLight(0xffd700, 2.2);
+      rim.position.set(-80, 40, -60);
+      const rim2 = new T.DirectionalLight(0x66aaff, 1.6);
+      rim2.position.set(80, 20, -60);
+      scene.add(key, rim, rim2);
+      const cam = new T.PerspectiveCamera(30, 360 / 330, 10, 1000);
+      cam.position.set(0, 33, 108);
+      cam.lookAt(0, 27, 0);
+      this.pr = { r, scene, cam, models: {} };
+    }
+    const P = this.pr;
+    let m = P.models[type];
+    if (!m) { m = P.models[type] = new Investor3D(type); P.scene.add(m.root); }
+    for (const k in P.models) P.models[k].root.visible = k === type;
+    m.root.rotation.y = selected ? 0.35 + Math.sin(time * 1.2) * 0.45 : 0.45;
+    m.pose({ state: 'idle', t: selected ? time : 0.4, vy: 0, onGround: true });
+    if (selected) m.body.position.y += Math.abs(Math.sin(time * 3)) * 1.2;
+    P.r.render(P.scene, P.cam);
+    return P.r.domElement;
+  }
+
+  render(level, camera2d, themeName, time, shake, player) {
+    if (level !== this.levelRef) this.build(level, themeName);
+    const dt = this.lastTime !== undefined ? Math.max(0, Math.min(0.1, time - this.lastTime)) : 0;
+    this.lastTime = time;
+
+    const VW = CONFIG.VIRTUAL_WIDTH, VH = CONFIG.VIRTUAL_HEIGHT;
+    this.camX = camera2d.x + VW / 2 - (shake ? shake.x : 0);
+    this.camY = -(camera2d.y + VH / 2) + (shake ? shake.y : 0);
+    this.cam.position.set(this.camX, this.camY, this.camDist);
+    this.cam.lookAt(this.camX, this.camY, 0);
+
+    // Shadow-casting light follows the view
+    this.sun.target.position.set(this.camX, this.camY, -200);
+    this.sun.position.set(this.camX - 500, this.camY + 900, 900);
+    this.fill.target.position.set(this.camX, this.camY, 0);
+    this.fill.position.set(this.camX + 200, this.camY + 150, 1000);
+
+    for (const d of this.dynamics) d(time, dt);
+    for (const t of this.tickers) t(time, dt);
+    this.syncPlayer(player, time, dt);
+
+    this.renderer.render(this.scene, this.cam);
+  }
+
+  // ------------------------------------------------------------
+  //  Helpers
+  // ------------------------------------------------------------
+  canvasTex(key, w, h, draw, opts) {
+    opts = opts || {};
+    if (key && this.textures[key]) return this.textures[key];
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    draw(c.getContext('2d'), w, h);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = opts.linear ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+    if (opts.repeat !== false) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = this.maxAniso;
+    if (key) this.textures[key] = t; else this.levelTextures.push(t);
+    return t;
+  }
+
+  mat(key, params, Kind) {
+    if (this.materials[key]) return this.materials[key];
+    const m = new (Kind || THREE.MeshStandardMaterial)(params);
+    this.materials[key] = m;
+    return m;
+  }
+
+  // Box whose UVs tile in world units (tile px per texture repeat). With
+  // stretchV, the four side faces map the texture once vertically (used for
+  // faces that have a distinct top band, e.g. curbs).
+  boxGeo(w, h, d, tile, stretchV) {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (!tile) return g;
+    const uv = g.attributes.uv;
+    // Face order: +x, -x, +y, -y, +z, -z (4 verts each)
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    for (let f = 0; f < 6; f++) {
+      const side = f !== 2 && f !== 3;
+      for (let i = 0; i < 4; i++) {
+        const k = f * 4 + i;
+        uv.setXY(k, uv.getX(k) * dims[f][0] / tile,
+          (stretchV && side) ? uv.getY(k) : uv.getY(k) * dims[f][1] / tile);
+      }
+    }
+    return g;
+  }
+
+  // Horizontal floor strip spanning x0..x1 at height y (world-down), from zNear back to zFar
+  floor(x0, x1, y, zNear, zFar, material, tile, stretchV) {
+    const w = x1 - x0, d = zNear - zFar;
+    const g = new THREE.PlaneGeometry(w, d);
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(i, uv.getX(i) * w / tile, stretchV ? uv.getY(i) : uv.getY(i) * d / tile);
+    }
+    const m = new THREE.Mesh(g, material);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set((x0 + x1) / 2, -y, (zNear + zFar) / 2);
+    m.receiveShadow = true;
+    this.root.add(m);
+    return m;
+  }
+
+  // Vertical wall facing the camera
+  wall(x0, x1, yTop, yBottom, z, material, tileU, tileV) {
+    const w = x1 - x0, h = yBottom - yTop;
+    const g = new THREE.PlaneGeometry(w, h);
+    const uv = g.attributes.uv;
+    for (let i = 0; i < uv.count; i++) {
+      uv.setXY(i, uv.getX(i) * w / tileU, tileV ? uv.getY(i) * h / tileV : uv.getY(i));
+    }
+    const m = new THREE.Mesh(g, material);
+    m.position.set((x0 + x1) / 2, -(yTop + yBottom) / 2, z);
+    this.root.add(m);
+    return m;
+  }
+
+  // Add a box to a group using 2D-style coordinates: (lx, ly) is the
+  // top-left corner in world-down space relative to the group, zFront is the
+  // camera-facing face (<= 0), d is depth into the screen.
+  addBox(group, geo, material, lx, ly, w, h, zFront, d, cast) {
+    const m = new THREE.Mesh(geo, material);
+    m.position.set(lx + w / 2, -(ly + h / 2), zFront - d / 2);
+    m.castShadow = cast !== false;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
+  }
+
+  // Static backdrop props are batched into one mesh per material to keep
+  // draw calls low. geo must already be transformed into world space; faces
+  // optionally limits a BoxGeometry to some of its faces (+x,-x,+y,-y,+z,-z).
+  mergeAdd(material, geo, faces, opts) {
+    opts = opts || {};
+    const key = material.uuid + (opts.cast ? 'c' : '') + (opts.receive ? 'r' : '');
+    let b = this.merged.get(key);
+    if (!b) {
+      b = { material, cast: !!opts.cast, receive: !!opts.receive, pos: [], nor: [], uv: [] };
+      this.merged.set(key, b);
+    }
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+    for (let v = 0; v < P.count; v++) {
+      if (faces && faces.indexOf(Math.floor(v / 6)) < 0) continue;
+      b.pos.push(P.getX(v), P.getY(v), P.getZ(v));
+      b.nor.push(N.getX(v), N.getY(v), N.getZ(v));
+      b.uv.push(U ? U.getX(v) : 0, U ? U.getY(v) : 0);
+    }
+    if (g !== geo) g.dispose();
+    geo.dispose();
+  }
+
+  flushMerged() {
+    for (const b of this.merged.values()) {
+      if (!b.pos.length) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+      g.computeBoundingSphere();
+      const m = new THREE.Mesh(g, b.material);
+      m.castShadow = b.cast;
+      m.receiveShadow = b.receive;
+      this.root.add(m);
+    }
+    this.merged.clear();
+  }
+
+  glowTex() {
+    return this.canvasTex('glow', 128, 128, (c, w, h) => {
+      const g = c.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, w, h);
+    }, { repeat: false });
+  }
+
+  glow(color, size, opacity) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.glowTex(), color: new THREE.Color(color), transparent: true,
+      opacity: opacity === undefined ? 0.8 : opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    s.scale.set(size, size, 1);
+    return s;
+  }
+
+  noise(c, w, h, count, colors, maxSize) {
+    for (let i = 0; i < count; i++) {
+      c.fillStyle = colors[i % colors.length];
+      const s = 1 + Math.random() * (maxSize || 2);
+      c.fillRect(Math.random() * w, Math.random() * h, s, s);
+    }
+  }
+
+  // ------------------------------------------------------------
+  //  Level build / teardown
+  // ------------------------------------------------------------
+  dispose() {
+    if (!this.root) return;
+    this.scene.remove(this.root);
+    const shared = new Set(Object.values(this.materials));
+    this.root.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) if (!shared.has(m)) m.dispose();
+      }
+    });
+    for (const t of this.levelTextures) t.dispose();
+    this.levelTextures = [];
+    this.root = null;
+  }
+
+  build(level, themeName) {
+    const T = THREE;
+    this.dispose();
+    this.levelRef = level;
+    this.tickers = [];
+    this.dynamics = [];
+    this.root = new T.Group();
+    this.scene.add(this.root);
+    this.merged = new Map();
+
+    const name = W3D_THEMES[themeName] ? themeName : 'nightCity';
+    const th = W3D_THEMES[name];
+    this.themeName = name;
+    this.rng = w3dRng(name.length * 7919 + (level.width | 0));
+
+    // Sky gradient + fog that fades distant geometry into the horizon
+    this.scene.background = this.canvasTex('sky_' + name, 4, 256, (c, w, h) => {
+      const g = c.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, th.sky[0]);
+      g.addColorStop(0.55, th.sky[1]);
+      g.addColorStop(1, th.sky[2]);
+      c.fillStyle = g;
+      c.fillRect(0, 0, w, h);
+    }, { repeat: false });
+    this.scene.fog = new T.Fog(th.fog, th.fogNear, th.fogFar);
+    this.hemi.color.set(th.hemi[0]);
+    this.hemi.groundColor.set(th.hemi[1]);
+    this.hemi.intensity = th.hemi[2];
+    this.ambient.color.set(th.ambient[0]);
+    this.ambient.intensity = th.ambient[1];
+    this.sun.color.set(th.sun[0]);
+    this.sun.intensity = th.sun[1];
+
+    this.x0 = -3500;
+    this.x1 = level.width + 3500;
+
+    // Level geometry
+    for (const solid of level.solids) {
+      if (solid instanceof QuestionBlock) this.buildQuestionBlock(solid);
+      else if (solid instanceof MovingPlatform) this.buildMovingPlatform(solid);
+      else if (solid.type === 'ground') this.buildGround(solid, level);
+      else this.root.add(this.buildPlatform(solid.type, solid.x, solid.y, solid.width, solid.height));
+    }
+
+    // Bottomless-pit abyss
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 330, 200, -2000,
+      this.mat('abyss', { color: 0x020208, roughness: 1 }), 1000);
+
+    for (const sign of level.memeSigns) this.buildSign(sign);
+    this.buildGoalBeam(level.goalPosition);
+
+    if (name === 'nightCity') this.buildNightCity(level);
+    else if (name === 'launchPad') this.buildLaunchPad(level);
+    else if (name === 'tradingFloor') this.buildTradingFloor(level);
+    else if (name === 'cryptoMines') this.buildCryptoMines(level);
+    this.flushMerged();
+  }
+
+  // ------------------------------------------------------------
+  //  Ground
+  // ------------------------------------------------------------
+  groundDepth() { return 320; }
+
+  groundMaterials() {
+    const n = this.themeName;
+    const key = 'ground_' + n;
+    if (this.materials[key + '_top']) {
+      return [this.materials[key + '_side'], this.materials[key + '_side'], this.materials[key + '_top'],
+        this.materials[key + '_side'], this.materials[key + '_front'], this.materials[key + '_side']];
+    }
+    let topTex, frontTex, rough = 0.9, metal = 0;
+    if (n === 'nightCity') {
+      topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
+        c.fillStyle = '#4a4a6e'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 500, ['#55557a', '#3f3f60', '#5a5a80']);
+        c.strokeStyle = '#2d2d4a'; c.lineWidth = 3;
+        c.strokeRect(0, 0, w, h);
+        c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
+      });
+      frontTex = this.canvasTex(key + '_f', 128, 256, (c, w, h) => {
+        // Granite block foundation under a lit curb
+        c.fillStyle = '#20203a'; c.fillRect(0, 0, w, h);
+        let row = 0;
+        for (let y = 12; y < h; y += 32, row++) {
+          for (let x = (row % 2) * -32; x < w; x += 64) {
+            const v = 40 + Math.floor(Math.random() * 14);
+            c.fillStyle = 'rgb(' + v + ',' + v + ',' + (v + 30) + ')';
+            c.fillRect(x + 2, y + 2, 60, 28);
+            c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(x + 2, y + 2, 60, 3);
+          }
+        }
+        this.noise(c, w, h, 500, ['rgba(0,0,0,0.25)', 'rgba(255,255,255,0.05)']);
+        c.fillStyle = '#7a7aa6'; c.fillRect(0, 0, w, 7);
+        c.fillStyle = '#4a4a70'; c.fillRect(0, 7, w, 4);
+      });
+    } else if (n === 'launchPad') {
+      topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
+        c.fillStyle = '#4a4656'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 600, ['#55516a', '#3e3a4a', '#5a5670']);
+        c.strokeStyle = '#2e2a3a'; c.lineWidth = 2; c.strokeRect(0, 0, w, h);
+        c.fillStyle = 'rgba(20,10,10,0.25)';
+        c.beginPath(); c.arc(w * 0.7, h * 0.3, 18, 0, Math.PI * 2); c.fill();
+      });
+      frontTex = this.canvasTex(key + '_f', 128, 256, (c, w, h) => {
+        c.fillStyle = '#34303e'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 600, ['#3e3a4a', '#2a2632']);
+        for (let x = -20; x < w + 20; x += 32) {
+          c.fillStyle = '#FFC400';
+          c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 16, 0); c.lineTo(x + 4, 16); c.lineTo(x - 12, 16); c.fill();
+        }
+        c.fillStyle = '#111'; c.fillRect(0, 16, w, 2);
+      });
+    } else if (n === 'tradingFloor') {
+      topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+          c.fillStyle = (i + j) % 2 ? '#7a6040' : '#a88a5c';
+          c.fillRect(i * w / 2, j * h / 2, w / 2, h / 2);
+        }
+        c.strokeStyle = 'rgba(255,240,210,0.18)'; c.lineWidth = 1;
+        for (let k = 0; k < 14; k++) {
+          c.beginPath(); c.moveTo(Math.random() * w, Math.random() * h);
+          c.bezierCurveTo(Math.random() * w, Math.random() * h, Math.random() * w, Math.random() * h, Math.random() * w, Math.random() * h);
+          c.stroke();
+        }
+      });
+      frontTex = this.canvasTex(key + '_f', 128, 256, (c, w, h) => {
+        c.fillStyle = '#4a3220'; c.fillRect(0, 0, w, h);
+        c.fillStyle = '#c9a24a'; c.fillRect(0, 0, w, 6);
+        c.fillStyle = '#3a2618';
+        c.fillRect(8, 20, w - 16, 90); c.fillRect(8, 124, w - 16, 120);
+        c.strokeStyle = '#5c4028'; c.lineWidth = 3;
+        c.strokeRect(8, 20, w - 16, 90); c.strokeRect(8, 124, w - 16, 120);
+      });
+      rough = 0.35; metal = 0.1;
+    } else {
+      topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
+        c.fillStyle = '#2c1f48'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 700, ['#382a5a', '#22183a', '#40306a'], 3);
+        c.strokeStyle = 'rgba(0,255,220,0.5)'; c.lineWidth = 1.5;
+        c.beginPath(); c.moveTo(10, 20); c.lineTo(40, 50); c.lineTo(36, 90); c.lineTo(70, 120); c.stroke();
+      });
+      frontTex = this.canvasTex(key + '_f', 128, 256, (c, w, h) => {
+        c.fillStyle = '#1c1430'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 900, ['#2a1e46', '#150f26', '#33245a'], 4);
+        c.fillStyle = '#a050ff'; c.fillRect(0, 0, w, 4);
+        c.strokeStyle = 'rgba(170,80,255,0.45)'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(0, 60); c.lineTo(50, 90); c.lineTo(80, 70); c.lineTo(128, 120); c.stroke();
+      });
+    }
+    const top = this.mat(key + '_top', { map: topTex, roughness: rough, metalness: metal });
+    const front = this.mat(key + '_front', { map: frontTex, roughness: 0.95,
+      emissive: 0xffffff, emissiveMap: frontTex, emissiveIntensity: 0.3 });
+    const side = this.mat(key + '_side', { map: frontTex, roughness: 0.95, color: 0xbbbbcc });
+    return [side, side, top, side, front, side];
+  }
+
+  buildGround(solid, level) {
+    // Extend the first/last segment past the level edge so the perspective
+    // view never shows the world's end at the sides.
+    let x = solid.x, w = solid.width;
+    if (x <= 0) { w += x + 1500; x = -1500; }
+    if (solid.x + solid.width >= level.width) w = (level.width + 1500) - x;
+    const d = this.groundDepth();
+    const geo = this.boxGeo(w, solid.height, d, 96, true);
+    const m = new THREE.Mesh(geo, this.groundMaterials());
+    m.position.set(x + w / 2, -(solid.y + solid.height / 2), -d / 2);
+    m.receiveShadow = true;
+    m.castShadow = true;
+    this.root.add(m);
+  }
+
+  // ------------------------------------------------------------
+  //  Platforms
+  // ------------------------------------------------------------
+  platformMats(type) {
+    const k = 'plat_' + type;
+    if (this.materials[k]) return this.materials[k];
+    const T = THREE;
+    let mats;
+    if (type === 'desk') {
+      const wood = this.canvasTex('wood', 128, 64, (c, w, h) => {
+        c.fillStyle = '#8B6914'; c.fillRect(0, 0, w, h);
+        for (let i = 0; i < 18; i++) {
+          c.strokeStyle = i % 2 ? 'rgba(90,60,10,0.5)' : 'rgba(190,140,50,0.35)';
+          c.lineWidth = 1 + Math.random() * 2;
+          const y = Math.random() * h;
+          c.beginPath(); c.moveTo(0, y);
+          c.bezierCurveTo(w * 0.3, y + 4, w * 0.6, y - 4, w, y + Math.random() * 4 - 2); c.stroke();
+        }
+      });
+      const top = new T.MeshStandardMaterial({ map: wood, color: 0xd8b070, roughness: 0.5 });
+      const side = new T.MeshStandardMaterial({ map: wood, roughness: 0.65 });
+      mats = { box: [side, side, top, side, side, side], leg: new T.MeshStandardMaterial({ color: 0x5a3a10, roughness: 0.6 }) };
+    } else if (type === 'taxi') {
+      const tex = this.canvasTex('taxi', 128, 32, (c, w, h) => {
+        c.fillStyle = '#f0c040'; c.fillRect(0, 0, w, h);
+        for (let x = 0; x < w; x += 16) {
+          c.fillStyle = '#111'; c.fillRect(x, 12, 8, 6); c.fillRect(x + 8, 18, 8, 6);
+          c.fillStyle = '#fff'; c.fillRect(x + 8, 12, 8, 6); c.fillRect(x, 18, 8, 6);
+        }
+      });
+      const paint = new T.MeshStandardMaterial({ color: 0xf0c040, roughness: 0.3, metalness: 0.3 });
+      const front = new T.MeshStandardMaterial({ map: tex, roughness: 0.3, metalness: 0.3 });
+      mats = { box: [paint, paint, paint, paint, front, paint],
+        light: new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffd700, emissiveIntensity: 1.2 }) };
+    } else if (type === 'terminal') {
+      const wood = new T.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.55 });
+      const top = new T.MeshStandardMaterial({ color: 0x6a5a48, roughness: 0.4 });
+      const screen = this.canvasTex('termScreen', 128, 32, (c, w, h) => {
+        c.fillStyle = '#041a08'; c.fillRect(0, 0, w, h);
+        let y = 22;
+        c.strokeStyle = '#00FF88'; c.lineWidth = 2; c.beginPath(); c.moveTo(0, y);
+        for (let x = 8; x <= w; x += 8) { y = Math.max(4, Math.min(28, y + (Math.random() - 0.62) * 8)); c.lineTo(x, y); }
+        c.stroke();
+        c.fillStyle = '#00FF88'; c.font = 'bold 9px monospace'; c.fillText('$$$', 4, 10);
+      }, { repeat: false });
+      const scr = new T.MeshStandardMaterial({ color: 0x000000, emissive: 0xffffff, emissiveMap: screen, emissiveIntensity: 1.4 });
+      const bezel = new T.MeshStandardMaterial({ color: 0x15151c, roughness: 0.4, metalness: 0.5 });
+      mats = { box: [wood, wood, top, wood, wood, wood], monitor: [bezel, bezel, bezel, bezel, scr, bezel], bezel };
+    } else if (type === 'column') {
+      const stone = this.canvasTex('marble', 128, 128, (c, w, h) => {
+        c.fillStyle = '#9a9aaa'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 400, ['#a8a8b8', '#8c8c9c']);
+        c.strokeStyle = 'rgba(255,255,255,0.2)';
+        for (let i = 0; i < 6; i++) { c.beginPath(); c.moveTo(Math.random() * w, 0); c.lineTo(Math.random() * w, h); c.stroke(); }
+      });
+      const flutes = this.canvasTex('flutes', 128, 16, (c, w, h) => {
+        for (let x = 0; x < w; x += 16) {
+          const g = c.createLinearGradient(x, 0, x + 16, 0);
+          g.addColorStop(0, '#6a6a7a'); g.addColorStop(0.5, '#b0b0c0'); g.addColorStop(1, '#6a6a7a');
+          c.fillStyle = g; c.fillRect(x, 0, 16, h);
+        }
+      });
+      const m = new T.MeshStandardMaterial({ map: stone, roughness: 0.4 });
+      mats = { box: [m, m, m, m, m, m], cap: new T.MeshStandardMaterial({ map: stone, color: 0xd0d0e0, roughness: 0.35 }),
+        shaft: new T.MeshStandardMaterial({ map: flutes, roughness: 0.45 }) };
+    } else if (type === 'server') {
+      const leds = this.canvasTex('serverLeds', 64, 32, (c, w, h) => {
+        c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+        for (let x = 4; x < w; x += 8) for (let y = 6; y < h; y += 10) {
+          c.fillStyle = ((x * 7 + y * 3) % 13 > 4) ? '#00FFCC' : '#FF00FF';
+          c.fillRect(x, y, 3, 3);
+        }
+      });
+      const body = new T.MeshStandardMaterial({ color: 0x1a1a2a, roughness: 0.35, metalness: 0.6 });
+      const front = new T.MeshStandardMaterial({ color: 0x14141f, roughness: 0.35, metalness: 0.6,
+        emissive: 0xffffff, emissiveMap: leds, emissiveIntensity: 1.6 });
+      const top = new T.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.3, metalness: 0.6 });
+      mats = { box: [body, body, top, body, front, body], front };
+    } else if (type === 'crystal') {
+      const m = new T.MeshStandardMaterial({ color: 0x7a10dd, emissive: 0x8a20ee, emissiveIntensity: 0.55,
+        roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88 });
+      const topm = new T.MeshStandardMaterial({ color: 0xa040ff, emissive: 0xb050ff, emissiveIntensity: 0.6, roughness: 0.15 });
+      mats = { box: [m, m, topm, m, m, m], shard: new T.MeshStandardMaterial({ color: 0xcc66ff, emissive: 0xaa33ff,
+        emissiveIntensity: 1.0, roughness: 0.1, flatShading: true }) };
+    } else if (type === 'rocket') {
+      mats = {
+        body: new T.MeshStandardMaterial({ color: 0xe8e8f0, roughness: 0.3, metalness: 0.4 }),
+        red: new T.MeshStandardMaterial({ color: 0xff4444, roughness: 0.4, metalness: 0.2 }),
+        port: new T.MeshStandardMaterial({ color: 0x224488, emissive: 0x4488ff, emissiveIntensity: 0.8 }),
+        flame: new T.MeshBasicMaterial({ color: 0xffa500, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }),
+        core: new T.MeshBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false }),
+      };
+    } else { // ledge (default)
+      const stone = this.canvasTex('ledgeStone', 64, 64, (c, w, h) => {
+        c.fillStyle = '#5a5a7a'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 300, ['#66668a', '#4e4e6c']);
+        c.strokeStyle = '#46465e'; c.lineWidth = 2; c.strokeRect(0, 0, w, h);
+      });
+      const m = new T.MeshStandardMaterial({ map: stone, roughness: 0.8 });
+      mats = { box: [m, m, m, m, m, m], lip: new T.MeshStandardMaterial({ map: stone, color: 0xc8c8e0, roughness: 0.7 }) };
+    }
+    this.materials[k] = mats;
+    return mats;
+  }
+
+  // Builds a platform group in local coords; group.position = (x, -y, 0)
+  buildPlatform(type, x, y, w, h) {
+    const T = THREE;
+    const g = new T.Group();
+    g.position.set(x, -y, 0);
+    const M = this.platformMats(type);
+    let D;
+    switch (type) {
+      case 'desk':
+        D = 72;
+        this.addBox(g, this.boxGeo(w, h, D, 128), M.box, 0, 0, w, h, 0, D);
+        for (const lx of [4, w - 10]) for (const z of [-20, -D + 10]) {
+          this.addBox(g, new T.BoxGeometry(6, 18, 6), M.leg, lx, h, 6, 18, z, 6);
+        }
+        break;
+      case 'taxi':
+        D = 64;
+        this.addBox(g, this.boxGeo(w, h, D, 128), M.box, 0, 0, w, h, 0, D);
+        this.addBox(g, new T.BoxGeometry(16, 8, 12), M.light, w / 2 - 8, -8, 16, 8, -D / 2 + 6, 12);
+        const tg = this.glow('#ffd700', 50, 0.5);
+        tg.position.set(w / 2, 4, -D / 2);
+        g.add(tg);
+        break;
+      case 'terminal': {
+        D = 72;
+        this.addBox(g, this.boxGeo(w, h, D, 128), M.box, 0, 0, w, h, 0, D);
+        const mw = Math.max(20, w - 12);
+        this.addBox(g, new T.BoxGeometry(mw, 22, 4), M.monitor, 6, -24, mw, 22, -D + 14, 4);
+        this.addBox(g, new T.BoxGeometry(6, 4, 6), M.bezel, w / 2 - 3, -3, 6, 4, -D + 15, 6);
+        break;
+      }
+      case 'column': {
+        D = 72;
+        this.addBox(g, this.boxGeo(w + 8, 6, D + 8, 128), M.cap, -4, 0, w + 8, 6, 0, D + 8);
+        this.addBox(g, this.boxGeo(w, h - 6, D, 128), M.box, 0, 6, w, h - 6, 0, D);
+        const shaftLen = y + h < W3D_GROUND_Y ? W3D_GROUND_Y - (y + h) : 40;
+        const r = Math.min(w * 0.32, 24);
+        const shaft = new T.Mesh(new T.CylinderGeometry(r, r * 1.05, shaftLen, 20), M.shaft);
+        shaft.position.set(w / 2, -(h + shaftLen / 2), -(20 + r)); // behind the player's depth
+        shaft.castShadow = shaft.receiveShadow = true;
+        g.add(shaft);
+        break;
+      }
+      case 'server':
+        D = 72;
+        this.addBox(g, this.boxGeo(w, h, D, 64), M.box, 0, 0, w, h, 0, D);
+        break;
+      case 'crystal': {
+        D = 60;
+        this.addBox(g, new T.BoxGeometry(w, h, D), M.box, 0, 0, w, h, 0, D);
+        const n = Math.max(2, Math.floor(w / 40));
+        for (let i = 0; i < n; i++) {
+          const sh = 12 + this.rng() * 18;
+          const s = new T.Mesh(new T.ConeGeometry(5 + this.rng() * 4, sh, 5), M.shard);
+          s.position.set((i + 0.5) * w / n, sh / 2 - 2, -D + 12 + this.rng() * 10);
+          s.rotation.z = (this.rng() - 0.5) * 0.5;
+          g.add(s);
+        }
+        const gl = this.glow('#cc44ff', w * 1.2, 0.35);
+        gl.position.set(w / 2, -h / 2, -D / 2);
+        g.add(gl);
+        break;
+      }
+      case 'rocket': {
+        const r = h / 2;
+        const bodyW = w - 24;
+        const body = new T.Mesh(new T.CylinderGeometry(r, r, bodyW, 24), M.body);
+        body.rotation.z = Math.PI / 2;
+        body.position.set(10 + bodyW / 2, -r, -r);
+        const nose = new T.Mesh(new T.ConeGeometry(r, 18, 24), M.red);
+        nose.rotation.z = -Math.PI / 2;
+        nose.position.set(10 + bodyW + 9, -r, -r);
+        g.add(body, nose);
+        for (let i = 0; i < 4; i++) {
+          const fin = new T.Mesh(new T.BoxGeometry(14, 3, r * 1.2), M.red);
+          const a = i * Math.PI / 2;
+          fin.position.set(10, -r + Math.cos(a) * r * 1.1, -r + Math.sin(a) * r * 1.1);
+          fin.rotation.x = a;
+          g.add(fin);
+        }
+        for (let px = 22; px < 10 + bodyW - 10; px += 22) {
+          const p = new T.Mesh(new T.CylinderGeometry(3.5, 3.5, 2, 12), M.port);
+          p.rotation.x = Math.PI / 2;
+          p.position.set(px, -r, 0.5);
+          g.add(p);
+        }
+        const flame = new T.Mesh(new T.ConeGeometry(r * 0.8, 24, 16, 1, true), M.flame);
+        flame.rotation.z = Math.PI / 2;
+        const core = new T.Mesh(new T.ConeGeometry(r * 0.45, 14, 12, 1, true), M.core);
+        core.rotation.z = Math.PI / 2;
+        const fg = this.glow('#ff9a30', 70, 0.6);
+        g.add(flame, core, fg);
+        const seed = x * 0.05 + y;
+        this.tickers.push(t => {
+          const f = 1 + Math.abs(Math.sin(seed + t * 20)) * 0.5;
+          flame.scale.set(1, f, 1); core.scale.set(1, f, 1);
+          flame.position.set(-12 * f + 2, -r, -r);
+          core.position.set(-7 * f + 2, -r, -r);
+          fg.position.set(-10, -r, -r + 6);
+        });
+        g.traverse(o => { if (o.isMesh && o.material !== M.flame && o.material !== M.core) o.castShadow = o.receiveShadow = true; });
+        break;
+      }
+      default: // ledge
+        D = 80;
+        this.addBox(g, this.boxGeo(w, Math.max(1, h - 4), D, 64), M.box, 0, 4, w, Math.max(1, h - 4), 0, D);
+        this.addBox(g, this.boxGeo(w + 4, 4, D + 4, 64), M.lip, -2, 0, w + 4, 4, 0, D + 4);
+    }
+    return g;
+  }
+
+  buildMovingPlatform(mp) {
+    const g = this.buildPlatform(mp.type, mp.x, mp.y, mp.width, mp.height);
+    this.root.add(g);
+    this.dynamics.push(() => g.position.set(mp.x, -mp.y, 0));
+  }
+
+  buildQuestionBlock(qb) {
+    const T = THREE;
+    const s = CONFIG.BLOCK_SIZE;
+    if (!this.materials.qblock) {
+      const face = this.canvasTex('qface', 128, 128, (c, w, h) => {
+        const g = c.createLinearGradient(0, 0, w, h);
+        g.addColorStop(0, '#FFE866'); g.addColorStop(1, '#FFC400');
+        c.fillStyle = g; c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#B8860B'; c.lineWidth = 8; c.strokeRect(8, 8, w - 16, h - 16);
+        c.fillStyle = '#B8860B';
+        for (const [px, py] of [[18, 18], [w - 18, 18], [18, h - 18], [w - 18, h - 18]]) {
+          c.beginPath(); c.arc(px, py, 5, 0, Math.PI * 2); c.fill();
+        }
+        c.font = 'bold 76px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillStyle = '#8a5a00'; c.fillText('?', w / 2 + 3, h / 2 + 7);
+        c.fillStyle = '#FFFFFF'; c.fillText('?', w / 2, h / 2 + 3);
+      }, { repeat: false });
+      const used = this.canvasTex('qused', 64, 64, (c, w, h) => {
+        c.fillStyle = '#8B7355'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 200, ['#7a6448', '#987f60']);
+        c.strokeStyle = '#6B5B3A'; c.lineWidth = 4; c.strokeRect(4, 4, w - 8, h - 8);
+      }, { repeat: false });
+      this.materials.qblock = new T.MeshStandardMaterial({ map: face, roughness: 0.4, metalness: 0.1,
+        emissive: 0xffffff, emissiveMap: face, emissiveIntensity: 0.3 });
+      this.materials.qused = new T.MeshStandardMaterial({ map: used, roughness: 0.8 });
+    }
+    const g = new T.Group();
+    const cube = this.addBox(g, new T.BoxGeometry(s, s, s), this.materials.qblock, 0, 0, s, s, 0, s);
+    const halo = this.glow('#ffcc00', s * 2.4, 0.25);
+    halo.position.set(s / 2, -s / 2, -s - 4);
+    g.add(halo);
+    this.root.add(g);
+    this.dynamics.push((t) => {
+      g.position.set(qb.x, -(qb.y + qb.bumpOffset), 0);
+      if (qb.used) {
+        if (cube.material !== this.materials.qused) { cube.material = this.materials.qused; halo.visible = false; }
+      } else {
+        this.materials.qblock.emissiveIntensity = 0.3 + Math.sin(t * 4) * 0.1;
+      }
+    });
+  }
+
+  // ------------------------------------------------------------
+  //  Decorations shared by all themes
+  // ------------------------------------------------------------
+  buildSign(sign) {
+    const T = THREE;
+    const size = sign.size || 20;
+    const color = sign.color || '#00FF88';
+    const scale = 3; // texture supersampling
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = 'bold ' + size + 'px sans-serif';
+    const panelW = measure.measureText(sign.text).width + 36;
+    const panelH = size + 26;
+    const tex = this.canvasTex(null, Math.ceil(panelW * scale), Math.ceil(panelH * scale), (c, w, h) => {
+      c.fillStyle = 'rgba(8,8,24,1)'; c.fillRect(0, 0, w, h);
+      c.strokeStyle = color; c.lineWidth = 3 * scale; c.strokeRect(2 * scale, 2 * scale, w - 4 * scale, h - 4 * scale);
+      c.font = 'bold ' + size * scale + 'px sans-serif';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.shadowColor = color; c.shadowBlur = 10 * scale;
+      c.fillStyle = color; c.fillText(sign.text, w / 2, h / 2 + scale);
+      c.shadowBlur = 0; c.fillStyle = '#ffffff'; c.globalAlpha = 0.6; c.fillText(sign.text, w / 2, h / 2 + scale);
+    }, { repeat: false });
+    const z = -70;
+    const top = W3D_GROUND_Y - (sign.h || 150);
+    const g = new T.Group();
+    const faceMat = new T.MeshBasicMaterial({ map: tex, toneMapped: false });
+    const backMat = new T.MeshStandardMaterial({ color: 0x1a1a30, roughness: 0.6, metalness: 0.5 });
+    const panel = new T.Mesh(new T.BoxGeometry(panelW, panelH, 8), [backMat, backMat, backMat, backMat, faceMat, backMat]);
+    panel.position.set(sign.x, -(top + panelH / 2), z);
+    panel.castShadow = true;
+    const poleLen = W3D_GROUND_Y - top - panelH;
+    const pole = new T.Mesh(new T.CylinderGeometry(3.5, 4.5, poleLen, 10),
+      this.mat('signPole', { color: 0x3a3a58, roughness: 0.5, metalness: 0.7 }));
+    pole.position.set(sign.x, -(W3D_GROUND_Y - poleLen / 2), z - 6);
+    pole.castShadow = true;
+    const halo = this.glow(color, panelW * 1.6, 0.35);
+    halo.scale.y = panelH * 3;
+    halo.position.set(sign.x, -(top + panelH / 2), z - 10);
+    g.add(panel, pole, halo);
+    this.root.add(g);
+    const phase = sign.x;
+    this.tickers.push(t => {
+      const flicker = Math.sin(t * 13 + phase * 0.7) > -0.92 ? 1 : 0.45;
+      faceMat.color.setScalar(flicker);
+      halo.material.opacity = 0.3 * flicker + Math.sin(t * 3 + phase) * 0.05;
+    });
+  }
+
+  buildGoalBeam(goal) {
+    const T = THREE;
+    const beam = new T.Mesh(new T.CylinderGeometry(40, 60, 1600, 24, 1, true),
+      new T.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.12, side: T.DoubleSide,
+        blending: T.AdditiveBlending, depthWrite: false }));
+    beam.position.set(goal.x + 24, -(W3D_GROUND_Y - 800), -90);
+    const glow = this.glow('#ffd700', 260, 0.45);
+    glow.position.set(goal.x + 24, -(W3D_GROUND_Y - 20), -90);
+    this.root.add(beam, glow);
+    this.tickers.push(t => {
+      beam.material.opacity = 0.1 + Math.sin(t * 2.5) * 0.04;
+      beam.rotation.y = t * 0.4;
+    });
+  }
+
+  buildStars(count, color) {
+    const T = THREE;
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      pos[i * 3] = this.x0 - 6000 + this.rng() * (this.x1 - this.x0 + 12000);
+      pos[i * 3 + 1] = -200 + this.rng() * 4200;
+      pos[i * 3 + 2] = -9000 - this.rng() * 1500;
+    }
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+    const mat = new T.PointsMaterial({ color: color || 0xffffff, size: 2.2, sizeAttenuation: false,
+      fog: false, transparent: true, opacity: 0.9, depthWrite: false });
+    const pts = new T.Points(geo, mat);
+    this.root.add(pts);
+    this.tickers.push(t => { mat.opacity = 0.75 + Math.sin(t * 1.7) * 0.15; });
+  }
+
+  // A sky body that drifts slowly relative to the camera (moon, planets)
+  buildSkyBody(radius, color, emissive, screenX, screenY, haloColor, followFactor) {
+    const T = THREE;
+    const m = new T.Mesh(new T.SphereGeometry(radius, 32, 16),
+      new T.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.9, roughness: 1, fog: false }));
+    const halo = this.glow(haloColor, radius * 5, 0.35);
+    halo.material.fog = false;
+    this.root.add(m, halo);
+    const z = -8500;
+    const k = (this.camDist - z) / this.camDist; // world units per screen pixel at that depth
+    this.tickers.push(t => {
+      const x = this.camX * followFactor + screenX * k;
+      const y = this.camY + screenY * k;
+      m.position.set(x, y, z);
+      halo.position.set(x, y, z + 10);
+      m.rotation.y = t * 0.03;
+    });
+  }
+
+  // Scrolling LED ticker strip built from live/hardcoded stock quotes
+  tickerTexture(stocks) {
+    const items = (stocks || []).map(s => (s.symbol + ' ' + s.price.toFixed(2) + ' ' + (s.change >= 0 ? '▲' : '▼') + Math.abs(s.change).toFixed(1) + '%'));
+    if (!items.length) items.push('BULL RUN ▲ TO THE MOON');
+    return this.canvasTex(null, 2048, 64, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      c.font = 'bold 38px monospace'; c.textBaseline = 'middle';
+      let x = 10, i = 0;
+      while (x < w) {
+        const s = stocks && stocks.length ? stocks[i % stocks.length] : { change: 1 };
+        c.fillStyle = s.change >= 0 ? '#00FF88' : '#FF4444';
+        const txt = items[i % items.length] + '   ';
+        c.fillText(txt, x, h / 2);
+        x += c.measureText(txt).width;
+        i++;
+      }
+    });
+  }
+
+  // ------------------------------------------------------------
+  //  Theme: Night City (Wall Street)
+  // ------------------------------------------------------------
+  windowTextures(key, litColors) {
+    const base = this.canvasTex(key + '_map', 256, 256, (c, w, h) => {
+      c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+      for (let r = 0; r < 8; r++) for (let q = 0; q < 8; q++) {
+        c.fillStyle = '#0b0b18';
+        c.fillRect(q * 32 + 7, r * 32 + 6, 18, 20);
+      }
+    });
+    const lit = this.canvasTex(key + '_lit', 256, 256, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      for (let r = 0; r < 8; r++) for (let q = 0; q < 8; q++) {
+        if (Math.random() > 0.3) continue;
+        c.fillStyle = litColors[Math.floor(Math.random() * litColors.length)];
+        c.globalAlpha = 0.6 + Math.random() * 0.4;
+        c.fillRect(q * 32 + 7, r * 32 + 6, 18, 20);
+      }
+      c.globalAlpha = 1;
+    });
+    return { base, lit };
+  }
+
+  buildSkyline(rows, palette, winKey, litColors, groundLevel) {
+    const T = THREE;
+    const win = this.windowTextures(winKey, litColors);
+    const roof = this.mat(winKey + '_roof', { color: 0x15152a, roughness: 0.9 });
+    const facade = palette.map((col, i) => this.mat(winKey + '_facade' + i, {
+      color: col, map: win.base, emissive: 0xffffff, emissiveMap: win.lit, emissiveIntensity: 0.9, roughness: 0.7, metalness: 0.2,
+    }));
+    const antennaMat = this.mat('antenna', { color: 0x555566, metalness: 0.8, roughness: 0.4 });
+    const beacons = [];
+    for (const row of rows) {
+      let x = this.x0;
+      while (x < this.x1) {
+        const w = row.wMin + this.rng() * (row.wMax - row.wMin);
+        const h = row.hMin + this.rng() * (row.hMax - row.hMin);
+        const d = row.dMin + this.rng() * (row.dMax - row.dMin);
+        const geo = this.boxGeo(w, h, d, 0);
+        // windows: ~24 world px per cell (texture has 8 cells), random offset per building
+        const uv = geo.attributes.uv;
+        const ou = Math.floor(this.rng() * 8) / 8, ov = Math.floor(this.rng() * 8) / 8;
+        const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+        for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) {
+          const k = f * 4 + i;
+          uv.setXY(k, ou + uv.getX(k) * dims[f][0] / 300, ov + uv.getY(k) * dims[f][1] / 300);
+        }
+        const fm = facade[Math.floor(this.rng() * facade.length)];
+        const z = row.z - this.rng() * row.zJitter - d / 2;
+        geo.translate(x + w / 2, -(groundLevel - h / 2), z);
+        this.mergeAdd(fm, geo.clone(), [0, 1, 4, 5], { receive: row.shadows });
+        this.mergeAdd(roof, geo, [2, 3]);
+        if (this.rng() < 0.3) {
+          const ah = 30 + this.rng() * 90;
+          this.mergeAdd(antennaMat, new T.CylinderGeometry(1.5, 2.5, ah, 6).translate(x + w / 2, -(groundLevel - h - ah / 2), z));
+          const bl = this.glow('#ff2020', 26, 0.9);
+          bl.position.set(x + w / 2, -(groundLevel - h - ah), z);
+          this.root.add(bl);
+          beacons.push({ s: bl, phase: this.rng() * 6 });
+        }
+        x += w + row.gapMin + this.rng() * row.gapMax;
+      }
+    }
+    this.tickers.push(t => {
+      for (const b of beacons) b.s.visible = Math.sin(t * 3 + b.phase) > 0.2;
+    });
+  }
+
+  buildNightCity(level) {
+    const T = THREE;
+    const gd = this.groundDepth();
+    // Street with lane markings, then far sidewalk
+    const asphalt = this.canvasTex('asphalt', 256, 256, (c, w, h) => {
+      c.fillStyle = '#1c1c28'; c.fillRect(0, 0, w, h);
+      this.noise(c, w, h, 1500, ['#24243a', '#16161f', '#2a2a40']);
+      c.fillStyle = '#d8d8e0'; c.fillRect(0, 10, w, 4); c.fillRect(0, h - 14, w, 4);
+      c.fillStyle = '#FFC400'; c.fillRect(0, h / 2 - 5, w * 0.5, 4); c.fillRect(0, h / 2 + 2, w * 0.5, 4);
+    });
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 10, -gd, -900,
+      this.mat('road', { map: asphalt, roughness: 0.85 }), 256, true);
+    this.floor(this.x0, this.x1, W3D_GROUND_Y, -900, -1100, this.groundMaterials()[2], 96);
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 2, -1100, -9000,
+      this.mat('cityFar', { color: 0x1a1a30, roughness: 1 }), 1000);
+
+    this.buildSkyline([
+      { z: -1120, zJitter: 60, wMin: 140, wMax: 260, hMin: 180, hMax: 460, dMin: 140, dMax: 240, gapMin: 40, gapMax: 160, shadows: true },
+      { z: -2000, zJitter: 250, wMin: 180, wMax: 340, hMin: 420, hMax: 1100, dMin: 200, dMax: 340, gapMin: 120, gapMax: 320, shadows: false },
+      { z: -3800, zJitter: 600, wMin: 260, wMax: 480, hMin: 800, hMax: 2200, dMin: 260, dMax: 480, gapMin: 200, gapMax: 600, shadows: false },
+    ], ['#23234a', '#2c2c56', '#1c1c40', '#302a50'], 'cityWin', ['#FFE4B5', '#87CEEB', '#FFD27A'], W3D_GROUND_Y);
+
+    // Scrolling stock ticker banners on the near row
+    const tickTex = this.tickerTexture(level.tickerStocks);
+    const tickMat = new T.MeshBasicMaterial({ map: tickTex, toneMapped: false });
+    for (let x = 400; x < level.width; x += 2200) {
+      const band = new T.Mesh(new T.PlaneGeometry(900, 36), tickMat);
+      band.position.set(x + 400, -(W3D_GROUND_Y - 230), -1105);
+      this.root.add(band);
+    }
+    tickTex.repeat.set(0.45, 1);
+    this.tickers.push((t) => { tickTex.offset.x = (t * 0.04) % 1; });
+
+    this.buildTraffic(level, gd);
+    this.buildStreetLights(level, gd);
+    this.buildStars(1400);
+    this.buildSkyBody(160, 0xfffff0, 0x777766, 260, 170, '#fffbe0', 0.92);
+  }
+
+  buildTraffic(level, gd) {
+    const T = THREE;
+    const colors = [0xf0c040, 0xf0c040, 0xcc2233, 0x2a5ad0, 0xe8e8f0, 0xf0c040];
+    const cars = [];
+    const wheelMat = this.mat('wheel', { color: 0x111111, roughness: 0.8 });
+    const glass = this.mat('carGlass', { color: 0x223344, roughness: 0.1, metalness: 0.8 });
+    for (let i = 0; i < 10; i++) {
+      const g = new T.Group();
+      const paint = this.mat('car' + colors[i % colors.length], { color: colors[i % colors.length], roughness: 0.3, metalness: 0.5 });
+      const body = new T.Mesh(new T.BoxGeometry(110, 26, 48), paint);
+      body.position.y = 22;
+      const cab = new T.Mesh(new T.BoxGeometry(60, 20, 44), glass);
+      cab.position.set(-6, 44, 0);
+      g.add(body, cab);
+      for (const wx of [-34, 34]) for (const wz of [-24, 24]) {
+        const wh = new T.Mesh(new T.CylinderGeometry(11, 11, 8, 14), wheelMat);
+        wh.rotation.x = Math.PI / 2;
+        wh.position.set(wx, 11, wz);
+        g.add(wh);
+      }
+      const dir = i % 2 ? 1 : -1;
+      const head = this.glow('#fff4cc', 60, 0.9);
+      head.position.set(58 * dir, 24, 0);
+      const tail = this.glow('#ff2222', 34, 0.8);
+      tail.position.set(-58 * dir, 24, 0);
+      g.add(head, tail);
+      g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      const lane = dir > 0 ? -gd - 170 : -gd - 420;
+      g.position.set(0, -(W3D_GROUND_Y + 10), lane);
+      this.root.add(g);
+      cars.push({ g, dir, speed: 260 + this.rng() * 220, base: this.rng() * 4000 });
+    }
+    this.tickers.push(t => {
+      const span = 4200;
+      for (const c of cars) {
+        const p = ((c.base + c.speed * t) % span + span) % span;
+        c.g.position.x = this.camX - span / 2 + (c.dir > 0 ? p : span - p);
+      }
+    });
+  }
+
+  buildStreetLights(level, gd) {
+    const T = THREE;
+    const poleMat = this.mat('lampPole', { color: 0x2a2a40, metalness: 0.8, roughness: 0.4 });
+    const bulb = this.mat('lampBulb', { color: 0xffffff, emissive: 0xffe8b0, emissiveIntensity: 2 }, T.MeshStandardMaterial);
+    for (let x = 200; x < level.width + 400; x += 640) {
+      const z = -gd + 30;
+      const pole = new T.Mesh(new T.CylinderGeometry(3, 4, 230, 8), poleMat);
+      pole.position.set(x, -(W3D_GROUND_Y - 115), z);
+      const arm = new T.Mesh(new T.BoxGeometry(4, 4, 60), poleMat);
+      arm.position.set(x, -(W3D_GROUND_Y - 228), z + 28);
+      const lamp = new T.Mesh(new T.BoxGeometry(22, 6, 14), bulb);
+      lamp.position.set(x, -(W3D_GROUND_Y - 224), z + 54);
+      const halo = this.glow('#ffe0a0', 140, 0.35);
+      halo.position.set(x, -(W3D_GROUND_Y - 215), z + 54);
+      pole.castShadow = true;
+      this.root.add(pole, arm, lamp, halo);
+    }
+  }
+
+  // ------------------------------------------------------------
+  //  Theme: Launch Pad (SpaceX IPO)
+  // ------------------------------------------------------------
+  buildLaunchPad(level) {
+    const T = THREE;
+    const gd = this.groundDepth();
+    const apron = this.canvasTex('apron', 256, 256, (c, w, h) => {
+      c.fillStyle = '#3a3646'; c.fillRect(0, 0, w, h);
+      this.noise(c, w, h, 1500, ['#46425a', '#2e2a38', '#4c4860']);
+      c.strokeStyle = '#2a2632'; c.lineWidth = 3; c.strokeRect(0, 0, w, h);
+      c.strokeStyle = 'rgba(255,196,0,0.5)'; c.lineWidth = 4;
+      c.beginPath(); c.moveTo(0, h * 0.5); c.lineTo(w, h * 0.5); c.stroke();
+    });
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 4, -gd, -2800, this.mat('apron', { map: apron, roughness: 0.9 }), 256);
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 6, -2800, -10000, this.mat('desert', { color: 0x2a1a30, roughness: 1 }), 1000);
+
+    const lattice = this.canvasTex('lattice', 64, 64, (c, w, h) => {
+      c.clearRect(0, 0, w, h);
+      c.strokeStyle = '#c03030'; c.lineWidth = 5;
+      c.strokeRect(2, 2, w - 4, h - 4);
+      c.beginPath(); c.moveTo(0, 0); c.lineTo(w, h); c.moveTo(w, 0); c.lineTo(0, h); c.stroke();
+    });
+    const towerMat = this.mat('tower', { map: lattice, alphaTest: 0.5, side: T.DoubleSide, roughness: 0.6, metalness: 0.5 });
+    const rocketTex = this.canvasTex('rocketSkin', 64, 256, (c, w, h) => {
+      c.fillStyle = '#eceff4'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#1a1a22'; c.fillRect(0, h * 0.18, w, 10); c.fillRect(0, h * 0.82, w, 18);
+      c.fillStyle = '#9aa0b0';
+      for (let y = 30; y < h; y += 26) c.fillRect(0, y, w, 1);
+      c.fillStyle = '#1a1a22'; c.font = 'bold 18px sans-serif'; c.save(); c.translate(w / 2 + 6, h * 0.5); c.rotate(-Math.PI / 2);
+      c.textAlign = 'center'; c.fillText('BULL-X', 0, 0); c.restore();
+    }, { repeat: false });
+    const rocketMat = this.mat('rocketBig', { map: rocketTex, roughness: 0.35, metalness: 0.3 });
+    const darkMat = this.mat('rocketDark', { color: 0x22222a, roughness: 0.4, metalness: 0.6 });
+    const flameMat = new T.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.9, blending: T.AdditiveBlending, depthWrite: false });
+    const coreMat = new T.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 1, blending: T.AdditiveBlending, depthWrite: false });
+
+    const beacons = [];
+    const launchers = [];
+    for (let x = this.x0 + 200; x < this.x1; x += 650 + this.rng() * 500) {
+      const z = -900 - this.rng() * 1800;
+      const scale = 0.8 + this.rng() * 0.8;
+      const th = 420 * scale + this.rng() * 200;
+      this.mergeAdd(towerMat, this.boxGeo(56, th, 56, 64).translate(x, -(W3D_GROUND_Y + 4 - th / 2), z), null, { cast: true });
+      const bl = this.glow('#ff3030', 40, 0.9);
+      bl.position.set(x, -(W3D_GROUND_Y - th - 6), z);
+      this.root.add(bl);
+      beacons.push({ s: bl, phase: this.rng() * 6 });
+
+      // Rocket beside the tower
+      const r = 26 * scale, rh = th * 0.9;
+      const rocket = new T.Group();
+      const body = new T.Mesh(new T.CylinderGeometry(r, r, rh, 24), rocketMat);
+      body.position.y = rh / 2;
+      const nose = new T.Mesh(new T.ConeGeometry(r, r * 3, 24), darkMat);
+      nose.position.y = rh + r * 1.5;
+      rocket.add(body, nose);
+      for (let i = 0; i < 4; i++) {
+        const fin = new T.Mesh(new T.BoxGeometry(4, r * 2.2, r * 1.6), darkMat);
+        fin.position.set(Math.cos(i * Math.PI / 2) * r, r * 1.1, Math.sin(i * Math.PI / 2) * r);
+        fin.rotation.y = -i * Math.PI / 2;
+        rocket.add(fin);
+      }
+      rocket.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      const flame = new T.Mesh(new T.ConeGeometry(r * 0.9, r * 6, 16, 1, true), flameMat);
+      flame.rotation.x = Math.PI;
+      const core = new T.Mesh(new T.ConeGeometry(r * 0.5, r * 3.5, 12, 1, true), coreMat);
+      core.rotation.x = Math.PI;
+      const fglow = this.glow('#ff9a40', r * 12, 0.9);
+      rocket.add(flame, core, fglow);
+      const baseX = x + 56 / 2 + r + 18, baseY = -(W3D_GROUND_Y + 4);
+      rocket.position.set(baseX, baseY, z);
+      this.root.add(rocket);
+      launchers.push({ rocket, flame, core, fglow, r, baseY, period: 14 + this.rng() * 14, offset: this.rng() * 30,
+        launches: this.rng() < 0.6 });
+    }
+
+    this.tickers.push(t => {
+      for (const b of beacons) b.s.visible = Math.sin(t * 3 + b.phase) > 0;
+      for (const L of launchers) {
+        let alt = 0, burning = false;
+        if (L.launches) {
+          const c = (t + L.offset) % L.period;
+          const ignite = L.period - 7; // last 7s of the cycle: ignition, liftoff, ascent
+          if (c > ignite) {
+            const lt = c - ignite;
+            burning = true;
+            alt = lt < 1 ? 0 : 0.5 * 140 * (lt - 1) * (lt - 1);
+          }
+        }
+        L.rocket.position.y = L.baseY + alt;
+        L.rocket.rotation.z = alt > 0 ? Math.min(0.25, alt / 9000) : 0;
+        const f = burning ? 1 + Math.sin(t * 40 + L.offset) * 0.15 : 0;
+        L.flame.visible = L.core.visible = L.fglow.visible = burning;
+        if (burning) {
+          L.flame.scale.set(f, f * (alt > 0 ? 1.6 : 1), f);
+          L.flame.position.y = -L.r * 3 * L.flame.scale.y;
+          L.core.position.y = -L.r * 1.75 * f;
+          L.fglow.position.y = -L.r * 2;
+        }
+      }
+    });
+
+    this.buildStars(1800);
+    this.buildSkyBody(120, 0xfffff0, 0x666655, 300, 150, '#fffbe0', 0.94);
+    this.buildSkyBody(90, 0xc1440e, 0x5a1a04, -260, 200, '#ff6633', 0.95);
+  }
+
+  // ------------------------------------------------------------
+  //  Theme: Trading Floor
+  // ------------------------------------------------------------
+  chartTexture(key, green) {
+    return this.canvasTex(key, 128, 80, (c, w, h) => {
+      c.fillStyle = '#04120a'; c.fillRect(0, 0, w, h);
+      c.strokeStyle = 'rgba(0,255,136,0.12)';
+      for (let y = 10; y < h; y += 14) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+      let p = h * 0.6;
+      for (let x = 4; x < w - 4; x += 9) {
+        const o = p; p = Math.max(8, Math.min(h - 8, p + (Math.random() - (green ? 0.62 : 0.38)) * 16));
+        const up = p < o;
+        c.fillStyle = up ? '#00DD77' : '#EE3344';
+        c.fillRect(x + 3, Math.min(p, o) - 4, 1, Math.abs(p - o) + 8);
+        c.fillRect(x, Math.min(p, o), 7, Math.max(2, Math.abs(p - o)));
+      }
+    }, { repeat: false });
+  }
+
+  buildTradingFloor(level) {
+    const T = THREE;
+    const gd = this.groundDepth();
+    const ZB = -3000, CEIL = -380;
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 2, -gd, ZB, this.groundMaterials()[2], 128);
+    // Ceiling with light panels
+    const ceilTex = this.canvasTex('ceilPanels', 128, 128, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#ffe2b0'; c.fillRect(24, 24, 80, 80);
+    });
+    const ceil = this.floor(this.x0, this.x1, CEIL, -gd, ZB, this.mat('ceiling', {
+      color: 0x2a1c10, emissive: 0xffe6c0, emissiveMap: ceilTex, emissiveIntensity: 0.55, roughness: 0.8, side: T.DoubleSide,
+    }), 260);
+    ceil.rotation.x = Math.PI / 2;
+
+    // Back wall: wood panels with giant screens and a ticker
+    const wallTex = this.canvasTex('wallPanels', 128, 128, (c, w, h) => {
+      c.fillStyle = '#3a2414'; c.fillRect(0, 0, w, h);
+      c.strokeStyle = '#5a3a20'; c.lineWidth = 4; c.strokeRect(6, 6, w - 12, h - 12);
+    });
+    this.wall(this.x0, this.x1, CEIL, W3D_GROUND_Y + 2, ZB, this.mat('backWall', { map: wallTex, roughness: 0.7 }), 160, 160);
+    const screens = [this.chartTexture('chartG1', true), this.chartTexture('chartG2', true), this.chartTexture('chartR1', false)];
+    const screenMats = screens.map(s => new T.MeshBasicMaterial({ map: s, toneMapped: false }));
+    for (let x = this.x0 + 300; x < this.x1; x += 900) {
+      const sm = screenMats[Math.floor(this.rng() * screenMats.length)];
+      const s = new T.Mesh(new T.PlaneGeometry(520, 320), sm);
+      s.position.set(x, -(W3D_GROUND_Y - 520), ZB + 4);
+      const frame = new T.Mesh(new T.BoxGeometry(540, 340, 6), this.mat('screenFrame', { color: 0x111118, metalness: 0.7, roughness: 0.3 }));
+      frame.position.set(x, -(W3D_GROUND_Y - 520), ZB + 2);
+      this.root.add(frame, s);
+    }
+    const tickTex = this.tickerTexture(level.tickerStocks);
+    tickTex.repeat.set(4, 1);
+    const band = new T.Mesh(new T.PlaneGeometry(this.x1 - this.x0, 70), new T.MeshBasicMaterial({ map: tickTex, toneMapped: false }));
+    band.position.set((this.x0 + this.x1) / 2, -(W3D_GROUND_Y - 820), ZB + 6);
+    this.root.add(band);
+    this.tickers.push(t => { tickTex.offset.x = (t * 0.05) % 1; });
+
+    // Marble columns floor-to-ceiling
+    const colMats = this.platformMats('column');
+    const colH = W3D_GROUND_Y - CEIL;
+    for (const z of [-800, -1900]) {
+      for (let x = this.x0 + (z === -800 ? 0 : 260); x < this.x1; x += 560) {
+        this.mergeAdd(colMats.shaft, new T.CylinderGeometry(34, 38, colH, 20).translate(x, -(W3D_GROUND_Y - colH / 2), z),
+          null, { cast: z === -800, receive: true });
+        this.mergeAdd(colMats.cap, new T.BoxGeometry(96, 24, 96).translate(x, -(W3D_GROUND_Y - 12), z));
+        this.mergeAdd(colMats.cap, new T.BoxGeometry(96, 24, 96).translate(x, -(CEIL + 12), z));
+      }
+    }
+
+    // Trading desks with glowing monitors
+    const deskMat = this.mat('tradeDesk', { color: 0x3a2618, roughness: 0.5 });
+    const bezel = this.mat('bezel', { color: 0x111118, metalness: 0.6, roughness: 0.3 });
+    const monMats = screens.map(s => new T.MeshBasicMaterial({ map: s, toneMapped: false }));
+    for (let x = this.x0; x < this.x1; x += 220 + this.rng() * 200) {
+      const z = -gd - 140 - this.rng() * 1500;
+      this.mergeAdd(deskMat, new T.BoxGeometry(170, 44, 70).translate(x, -(W3D_GROUND_Y - 22), z), null, { receive: true });
+      const n = 2 + Math.floor(this.rng() * 2);
+      for (let i = 0; i < n; i++) {
+        const mon = new T.BoxGeometry(46, 30, 4)
+          .rotateY((i - (n - 1) / 2) * -0.15)
+          .translate(x - (n - 1) * 26 + i * 52, -(W3D_GROUND_Y - 44 - 22), z - 16);
+        this.mergeAdd(monMats[Math.floor(this.rng() * monMats.length)], mon.clone(), [4]);
+        this.mergeAdd(bezel, mon, [0, 1, 2, 3, 5]);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------
+  //  Theme: Crypto Mines
+  // ------------------------------------------------------------
+  buildCryptoMines(level) {
+    const T = THREE;
+    const gd = this.groundDepth();
+    const ZB = -2600, CEIL = -300;
+    const rockTex = this.canvasTex('caveRock', 256, 256, (c, w, h) => {
+      c.fillStyle = '#1a1230'; c.fillRect(0, 0, w, h);
+      this.noise(c, w, h, 2500, ['#241a40', '#120c22', '#2c2050'], 5);
+    });
+    const rock = this.mat('caveRock', { map: rockTex, roughness: 1 });
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 2, -gd, ZB, rock, 256);
+    const ceil = this.floor(this.x0, this.x1, CEIL, -gd, ZB, this.mat('caveCeil', { map: rockTex, roughness: 1, side: T.DoubleSide }), 256);
+    ceil.rotation.x = Math.PI / 2;
+
+    // Back wall: matrix rain scrolling down a dark rock face
+    const matrix = this.canvasTex('matrix', 256, 512, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      c.font = 'bold 14px monospace';
+      for (let x = 0; x < w; x += 14) {
+        const len = 6 + Math.floor(Math.random() * 18);
+        const y0 = Math.random() * h;
+        for (let j = 0; j < len; j++) {
+          c.fillStyle = j === len - 1 ? '#bbffcc' : 'rgba(0,200,80,' + (0.15 + j / len * 0.6) + ')';
+          c.fillText(String.fromCharCode(0x30 + Math.floor(Math.random() * 10)), x, (y0 + j * 16) % h);
+        }
+      }
+    });
+    const wallMat = this.mat('matrixWall', { map: rockTex, emissive: 0xffffff, emissiveMap: matrix, emissiveIntensity: 1, roughness: 1 });
+    this.wall(this.x0, this.x1, CEIL, W3D_GROUND_Y + 2, ZB, wallMat, 512, 1024);
+    this.tickers.push(t => { matrix.offset.y = (t * 0.08) % 1; });
+
+    // Stalactites
+    const stalMat = this.mat('stal', { color: 0x2a1a50, roughness: 0.9, flatShading: true });
+    const tipGlows = [];
+    for (let i = 0; i < (this.x1 - this.x0) / 110; i++) {
+      const x = this.x0 + this.rng() * (this.x1 - this.x0);
+      const z = -gd - 60 - this.rng() * 2000;
+      const len = 80 + this.rng() * 320;
+      this.mergeAdd(stalMat, new T.ConeGeometry(14 + this.rng() * 30, len, 6).rotateX(Math.PI).translate(x, -(CEIL + len / 2), z));
+      if (this.rng() < 0.25) {
+        const g = this.glow('#9a44ff', 40, 0.6);
+        g.position.set(x, -(CEIL + len), z);
+        this.root.add(g);
+        tipGlows.push(g);
+      }
+    }
+
+    // Server rack rows with blinking LEDs (three materials, out of phase)
+    const ledTex = this.canvasTex('rackLeds', 64, 128, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      for (let y = 6; y < h; y += 10) {
+        c.fillStyle = '#1a1a3a'; c.fillRect(4, y - 3, w - 8, 8);
+        c.fillStyle = Math.random() > 0.5 ? '#00FFCC' : '#FF00FF';
+        c.fillRect(8, y, 4, 2); c.fillRect(w - 12, y, 4, 2);
+        if (Math.random() > 0.5) { c.fillStyle = '#00CCFF'; c.fillRect(18, y, 3, 2); }
+      }
+    });
+    const rackMats = [0, 1, 2].map(i => new T.MeshStandardMaterial({ color: 0x0c0c1e, metalness: 0.6, roughness: 0.35,
+      emissive: 0xffffff, emissiveMap: ledTex, emissiveIntensity: 1.5 }));
+    const rackSide = this.mat('rackSide', { color: 0x10102a, metalness: 0.6, roughness: 0.4 });
+    for (const z of [-700, -1300, -1950]) {
+      for (let x = this.x0; x < this.x1; x += 70 + this.rng() * 140) {
+        const w = 50 + this.rng() * 50, h = 160 + this.rng() * 300;
+        const geo = this.boxGeo(w, h, 70, 0);
+        const uv = geo.attributes.uv;
+        for (let k = 16; k < 20; k++) uv.setXY(k, uv.getX(k) * w / 64, uv.getY(k) * h / 128);
+        const fm = rackMats[Math.floor(this.rng() * 3)];
+        geo.translate(x, -(W3D_GROUND_Y - h / 2), z);
+        const sh = { cast: z === -700, receive: z === -700 };
+        this.mergeAdd(fm, geo.clone(), [4], sh);
+        this.mergeAdd(rackSide, geo, [0, 1, 2, 3, 5], sh);
+      }
+    }
+
+    // Glowing crystal clusters
+    const crystalMats = [
+      new T.MeshStandardMaterial({ color: 0x9a30ff, emissive: 0x7a10ff, emissiveIntensity: 0.9, roughness: 0.1, flatShading: true, transparent: true, opacity: 0.9 }),
+      new T.MeshStandardMaterial({ color: 0x30e0ff, emissive: 0x10a0ff, emissiveIntensity: 0.9, roughness: 0.1, flatShading: true, transparent: true, opacity: 0.9 }),
+    ];
+    const crystals = [];
+    for (let x = this.x0; x < this.x1; x += 260 + this.rng() * 400) {
+      const z = -gd - 80 - this.rng() * 1200;
+      const cm = crystalMats[Math.floor(this.rng() * 2)];
+      const n = 3 + Math.floor(this.rng() * 4);
+      for (let i = 0; i < n; i++) {
+        const s = 14 + this.rng() * 22;
+        const sy = 2 + this.rng() * 1.5;
+        const c = new T.OctahedronGeometry(s, 0).scale(1, sy, 1)
+          .rotateY(this.rng() * 3).rotateZ((this.rng() - 0.5) * 0.6).rotateX((this.rng() - 0.5) * 0.6)
+          .translate(x + (this.rng() - 0.5) * 60, -(W3D_GROUND_Y + 2) + s * sy * 0.6, z + (this.rng() - 0.5) * 40);
+        this.mergeAdd(cm, c, null, { cast: true });
+      }
+      const gl = this.glow(cm === crystalMats[0] ? '#aa44ff' : '#33ccff', 220, 0.45);
+      gl.position.set(x, -(W3D_GROUND_Y + 2) + 40, z);
+      this.root.add(gl);
+      crystals.push({ gl, phase: this.rng() * 6 });
+    }
+
+    // Floating crypto coins
+    const coinFace = (key, sym, col) => this.canvasTex(key, 128, 128, (c, w, h) => {
+      c.fillStyle = col; c.beginPath(); c.arc(w / 2, h / 2, w / 2, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = 6; c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 10, 0, Math.PI * 2); c.stroke();
+      c.fillStyle = '#ffffff'; c.font = 'bold 72px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(sym, w / 2, h / 2 + 4);
+    }, { repeat: false });
+    const coinDefs = [['coinBTC', '₿', '#F7931A'], ['coinETH', 'Ξ', '#627EEA'], ['coinDOGE', 'Ð', '#C3A634']];
+    const coinMats = coinDefs.map(([k, s, col]) => {
+      const face = new T.MeshStandardMaterial({ map: coinFace(k, s, col), metalness: 0.7, roughness: 0.3, emissive: col, emissiveIntensity: 0.25 });
+      const edge = new T.MeshStandardMaterial({ color: col, metalness: 0.8, roughness: 0.3 });
+      return [edge, face, face];
+    });
+    const coins = [];
+    for (let x = this.x0; x < this.x1; x += 350 + this.rng() * 450) {
+      const m = new T.Mesh(new T.CylinderGeometry(24, 24, 5, 32), coinMats[Math.floor(this.rng() * 3)]);
+      m.rotation.x = Math.PI / 2;
+      const holder = new T.Group();
+      holder.add(m);
+      holder.position.set(x, -(W3D_GROUND_Y - 200 - this.rng() * 260), -gd - 150 - this.rng() * 1100);
+      this.root.add(holder);
+      coins.push({ holder, baseY: holder.position.y, phase: this.rng() * 6 });
+    }
+
+    this.tickers.push(t => {
+      for (let i = 0; i < 3; i++) rackMats[i].emissiveIntensity = Math.sin(t * 3 + i * 2.1) > -0.3 ? 1.6 : 0.5;
+      for (const c of crystals) c.gl.material.opacity = 0.35 + Math.sin(t * 1.5 + c.phase) * 0.15;
+      for (const c of coins) {
+        c.holder.rotation.y = t * 1.2 + c.phase;
+        c.holder.position.y = c.baseY + Math.sin(t * 0.8 + c.phase) * 14;
+      }
+    });
+  }
+}
+  </script>
+  <script>
+// ==========================================
 //  BULL RUN - Main Game Loop & State Machine
 // ==========================================
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const world3d = World3D.create(); // null -> classic 2D renderer
 
 const input = new InputHandler();
 const touchControls = new TouchControls(canvas, input);
@@ -8014,10 +9801,18 @@ let marketCrashActive = false;
 let marketCrashTimer = 0;
 let marketCrashShakeOffset = { x: 0, y: 0 };
 let diamondSpawnTimer = 0;
+let diamondSpawnDelay = 35 + Math.random() * 20;
 let dhTickTimer = 0;
 
 // Level system
 let currentLevelIndex = 0;
+let goalLockedHintTimer = 0;
+
+// Pause (P / Esc, auto-pauses when the tab is hidden)
+let gamePaused = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && currentState === GameState.PLAYING) gamePaused = true;
+});
 
 // ==========================================
 //  Canvas setup
@@ -8059,7 +9854,10 @@ function startGame(characterType, levelIndex) {
   marketCrashTimer = 0;
   marketCrashShakeOffset = { x: 0, y: 0 };
   diamondSpawnTimer = 0;
+  diamondSpawnDelay = 35 + Math.random() * 20;
   dhTickTimer = 0;
+  flashCrashTimer = 0;
+  gamePaused = false;
   leaderboard.resetSession();
 
   // Wire up question block callbacks
@@ -8106,6 +9904,22 @@ function update(dt) {
   // Debug mode toggle
   if (input.wasPressed('F1') || input.wasPressed('Backquote')) {
     debugMode = !debugMode;
+  }
+
+  // Mute toggle (M) works everywhere
+  if (input.wasPressed('KeyM')) audio.toggleMute();
+
+  if (currentState === GameState.PLAYING) {
+    if (input.wasPressed('KeyP') || input.wasPressed('Escape')) {
+      gamePaused = !gamePaused;
+    } else if (gamePaused && (input.wasPressed('Enter') || input.wasPressed('Space'))) {
+      gamePaused = false; // also resumes from a touch tap
+    }
+    if (gamePaused) {
+      input.clearFrameState();
+      touchControls.update(dt, currentState);
+      return;
+    }
   }
 
   switch (currentState) {
@@ -8256,6 +10070,7 @@ function updatePlaying(dt) {
   // Player vs enemies collision
   if (!player.deathAnimating) {
     for (const enemy of level.enemies) {
+      if (player.deathAnimating) break; // already died this frame
       if (!enemy.alive) continue;
       if (!aabbOverlap(player, enemy)) continue;
 
@@ -8330,7 +10145,7 @@ function updatePlaying(dt) {
   // Player vs collectibles
   for (let i = level.collectibles.length - 1; i >= 0; i--) {
     const c = level.collectibles[i];
-    if (c.collected) continue;
+    if (c.collected || c.type === 'redCandle') continue; // hazards are handled below
     if (!aabbOverlap(player, c)) continue;
 
     c.collected = true;
@@ -8489,8 +10304,9 @@ function updatePlaying(dt) {
 
   // Spawn running diamond every 35-55 seconds
   diamondSpawnTimer += dt;
-  if (diamondSpawnTimer >= 35 + Math.random() * 20) {
+  if (diamondSpawnTimer >= diamondSpawnDelay) {
     diamondSpawnTimer = 0;
+    diamondSpawnDelay = 35 + Math.random() * 20;
     // Spawn from right side of screen, bouncing left toward player
     const spawnX = player.x + CONFIG.VIRTUAL_WIDTH + 40;
     const spawnY = 380;
@@ -8648,9 +10464,18 @@ function updatePlaying(dt) {
 
   // Goal check
   const goal = level.goalPosition;
-  if (!player.deathAnimating &&
+  const atGoal = !player.deathAnimating &&
       Math.abs(player.x + player.width / 2 - goal.x - 24) < 50 &&
-      Math.abs(player.y + player.height / 2 - goal.y - 20) < 50) {
+      Math.abs(player.y + player.height / 2 - goal.y - 20) < 50;
+  const bossBlocking = level.boss && level.boss.alive;
+  if (atGoal && bossBlocking) {
+    goalLockedHintTimer -= dt;
+    if (goalLockedHintTimer <= 0) {
+      goalLockedHintTimer = 2;
+      floatingText.spawn(goal.x + 24, goal.y - 30, 'DEFEAT THE WHALE FIRST!', CONFIG.COLORS.TICKER_RED, 20, 1.5);
+    }
+  }
+  if (atGoal && !bossBlocking) {
     audio.playLevelComplete();
     // Calculate time bonus: faster = more points
     const timeBonus = Math.max(0, Math.round(5000 - levelTime * 50));
@@ -8776,8 +10601,14 @@ function updateLevelComplete(dt) {
       player.crouching = false;
       player.crouchTimer = 0;
       player.superJumpReady = false;
+      player.rocketBoostTimer = 0;
+      player.landSquashTimer = 0;
       diamondSpawnTimer = 0;
+      diamondSpawnDelay = 35 + Math.random() * 20;
       dhTickTimer = 0;
+      flashCrashTimer = 0;
+      deathPauseTimer = 0;
+      marginCallShown = false;
       camera = new Camera(CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
       camera.levelWidth = level.width;
       camera.levelHeight = level.height;
@@ -8814,13 +10645,27 @@ function updateLevelComplete(dt) {
 //  Main Render
 // ==========================================
 function render() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
   const scale = getScale();
   const offsetX = (canvas.width - CONFIG.VIRTUAL_WIDTH * scale) / 2;
   const offsetY = (canvas.height - CONFIG.VIRTUAL_HEIGHT * scale) / 2;
+
+  // 3D world layer: drawn underneath, the 2D canvas stays transparent over it
+  const use3D = !!(world3d && level && camera && currentState !== GameState.TITLE);
+  if (world3d) {
+    world3d.setActive(use3D);
+    if (use3D) {
+      world3d.layout(Math.round(offsetX), Math.round(offsetY),
+        Math.round(CONFIG.VIRTUAL_WIDTH * scale), Math.round(CONFIG.VIRTUAL_HEIGHT * scale));
+      world3d.render(level, camera, background.theme, gameTime,
+        marketCrashActive ? marketCrashShakeOffset : null, player);
+    }
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!use3D) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 
   ctx.save();
   ctx.translate(offsetX, offsetY);
@@ -8838,6 +10683,7 @@ function render() {
 
     case GameState.PLAYING:
       renderPlaying();
+      if (gamePaused) renderPauseOverlay();
       break;
 
     case GameState.GAME_OVER:
@@ -8855,6 +10701,20 @@ function render() {
 
   // Touch controls overlay (drawn in screen-space, outside game viewport transform)
   touchControls.render(ctx, canvas.width, canvas.height, currentState);
+}
+
+function renderPauseOverlay() {
+  const w = CONFIG.VIRTUAL_WIDTH, h = CONFIG.VIRTUAL_HEIGHT;
+  ctx.fillStyle = 'rgba(5, 5, 20, 0.6)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
+  ctx.font = 'bold 54px sans-serif';
+  ctx.fillText('TRADING HALTED', w / 2, h / 2 - 30);
+  ctx.fillStyle = '#c8c8e0';
+  ctx.font = '18px sans-serif';
+  ctx.fillText('Press P, Esc, Enter or tap to resume  ·  M to ' + (audio.muted ? 'unmute' : 'mute'), w / 2, h / 2 + 24);
 }
 
 // Neon meme billboard on a pole (decorative, behind gameplay)
@@ -8930,29 +10790,35 @@ function renderPlaying() {
     ctx.translate(marketCrashShakeOffset.x, marketCrashShakeOffset.y);
   }
 
-  // Background (parallax)
-  background.render(ctx, camera, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT, gameTime);
-
-  // Pit voids (draw dark areas where there's no ground)
-  ctx.fillStyle = CONFIG.COLORS.PIT_VOID;
-  ctx.fillRect(0, 432 - camera.y, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
-
-  // Meme billboards (decorative, behind level geometry)
-  for (const sign of level.memeSigns) {
-    renderMemeSign(ctx, camera, sign, gameTime);
-  }
-
-  // Level geometry - only render visible solids
+  // With the 3D layer active, backdrop, billboards and level geometry are
+  // already drawn in 3D underneath; only sprites/FX/HUD are drawn here.
+  const is3D = !!(world3d && world3d.active);
   const viewLeft = camera.x - 100;
   const viewRight = camera.x + CONFIG.VIRTUAL_WIDTH + 100;
-  for (const solid of level.solids) {
-    if (solid.x + solid.width > viewLeft && solid.x < viewRight) {
-      solid.render(ctx, camera);
+
+  if (!is3D) {
+    // Background (parallax)
+    background.render(ctx, camera, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT, gameTime);
+
+    // Pit voids (draw dark areas where there's no ground)
+    ctx.fillStyle = CONFIG.COLORS.PIT_VOID;
+    ctx.fillRect(0, 432 - camera.y, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
+
+    // Meme billboards (decorative, behind level geometry)
+    for (const sign of level.memeSigns) {
+      renderMemeSign(ctx, camera, sign, gameTime);
+    }
+
+    // Level geometry - only render visible solids
+    for (const solid of level.solids) {
+      if (solid.x + solid.width > viewLeft && solid.x < viewRight) {
+        solid.render(ctx, camera);
+      }
     }
   }
 
   // Moving platforms
-  if (level.movingPlatforms) {
+  if (!is3D && level.movingPlatforms) {
     for (const mp of level.movingPlatforms) {
       if (mp.x + mp.width > viewLeft && mp.x < viewRight) {
         mp.render(ctx, camera);
@@ -8997,7 +10863,7 @@ function renderPlaying() {
   }
 
   // Player
-  if (!player.deathAnimating) {
+  if (!player.deathAnimating && !is3D) {
     renderEntityShadow(ctx, camera, player);
   }
   player.render(ctx, camera);
