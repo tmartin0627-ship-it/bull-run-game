@@ -1029,6 +1029,20 @@ class Platform {
         }
         break;
 
+      case 'gpu':
+        // GPU compute rack
+        ctx.fillStyle = '#2c2724';
+        ctx.fillRect(sx, sy, this.width, this.height);
+        ctx.fillStyle = '#D97757';
+        ctx.fillRect(sx, sy, this.width, 5);
+        ctx.fillStyle = '#17140f';
+        for (let yy = sy + 10; yy < sy + this.height - 4; yy += 8) ctx.fillRect(sx + 6, yy, this.width - 26, 4);
+        for (let yy = sy + 10; yy < sy + this.height - 4; yy += 16) {
+          ctx.fillStyle = '#FF8A50'; ctx.fillRect(sx + this.width - 14, yy, 4, 3);
+          ctx.fillStyle = '#FFE0B0'; ctx.fillRect(sx + this.width - 8, yy, 4, 3);
+        }
+        break;
+
       case 'crystal':
         // Glowing crystal platform
         ctx.fillStyle = '#6a00cc';
@@ -4247,6 +4261,181 @@ const LEVEL_SPACEX = {
   ],
 };
 
+// LEVEL — Anthropic IPO. Anthropic listed on Nasdaq 2026-11-19 as ANT:
+// priced at $83, opened at $111.50 (+34%), the largest IPO on record.
+// Warm golden-hour campus: GPU clusters, office desks, a neural-net sky and
+// ticker-tape confetti. Difficulty sits between SpaceX and Wall Street.
+const LEVEL_ANTHROPIC = {
+  name: "Anthropic IPO",
+  theme: 'aiCampus',
+  width: 9400,
+  playerStart: { x: 96, y: 370 },
+  goalPosition: { x: 9100, y: 380 },
+
+  checkpoints: [{ x: 3300 }, { x: 6300 }],
+
+  // Fallback ticker — ANT: IPO priced $83, opened $111.50 (+34%) on 2026-11-19
+  tickerStocks: [
+    { symbol: 'ANT', price: 111.50, change: 34.3 },
+    { symbol: 'NVDA', price: 142.62, change: 2.7 },
+    { symbol: 'GOOGL', price: 178.20, change: 1.4 },
+    { symbol: 'AMZN', price: 228.93, change: 1.1 },
+    { symbol: 'MSFT', price: 415.30, change: 0.8 },
+    { symbol: 'AMD', price: 156.40, change: 2.1 },
+    { symbol: 'AVGO', price: 241.10, change: 1.9 },
+    { symbol: 'TSM', price: 198.75, change: 1.6 },
+    { symbol: 'MU', price: 112.30, change: 2.4 },
+    { symbol: 'SPCX', price: 160.95, change: 19.2 },
+    { symbol: 'AAPL', price: 232.47, change: 0.6 },
+    { symbol: 'META', price: 612.04, change: 0.9 },
+  ],
+
+  groundSegments: [
+    // Section 1: The office (0-1700)
+    { x: 0, width: 1700 },
+    // Pit 1 (1700-1840, 140)
+    { x: 1840, width: 1460 },
+    // Pit 2 (3300-3450, 150) — GPU ferry optional
+    { x: 3450, width: 1550 },
+    // Pit 3 (5000-5150, 150)
+    { x: 5150, width: 1450 },
+    // Pit 4 (6600-6750, 150)
+    { x: 6750, width: 2650 },
+  ],
+
+  platforms: [
+    // Section 1 — the office: hot desks
+    { x: 520, y: 340, w: 140, h: 16, type: 'desk' },
+    { x: 760, y: 290, w: 130, h: 16, type: 'desk' },
+    { x: 1250, y: 330, w: 140, h: 16, type: 'desk' },
+    // Section 2 — compute cluster: GPU racks climbing like a scaling curve
+    { x: 2050, y: 360, w: 110, h: 72, type: 'gpu' },
+    { x: 2250, y: 320, w: 110, h: 112, type: 'gpu' },
+    { x: 2450, y: 280, w: 110, h: 152, type: 'gpu' },
+    { x: 2800, y: 330, w: 140, h: 16, type: 'desk' },
+    // Section 3 — context window
+    { x: 3700, y: 330, w: 140, h: 16, type: 'ledge' },
+    { x: 3950, y: 280, w: 130, h: 16, type: 'desk' },
+    { x: 4250, y: 330, w: 130, h: 16, type: 'ledge' },
+    { x: 4650, y: 360, w: 110, h: 72, type: 'gpu' },
+    // Section 4 — the trading debut
+    { x: 5450, y: 330, w: 140, h: 16, type: 'desk' },
+    { x: 5750, y: 280, w: 130, h: 16, type: 'desk' },
+    { x: 6200, y: 330, w: 130, h: 16, type: 'ledge' },
+    // Section 5 — opening bell victory run
+    { x: 7100, y: 360, w: 110, h: 72, type: 'gpu' },
+    { x: 7300, y: 310, w: 110, h: 122, type: 'gpu' },
+    { x: 7700, y: 330, w: 140, h: 16, type: 'desk' },
+    { x: 8000, y: 280, w: 130, h: 16, type: 'desk' },
+    { x: 8500, y: 330, w: 140, h: 16, type: 'ledge' },
+  ],
+
+  movingPlatforms: [
+    // GPU ferry across pit 2 (pit is jumpable; this is a bonus ride)
+    { x: 3300, y: 360, w: 110, h: 18, type: 'gpu', speed: 50, waypoints: [{ x: 3290, y: 360 }, { x: 3390, y: 360 }] },
+    // Compute elevator up to a dividend coin
+    { x: 4450, y: 380, w: 110, h: 18, type: 'gpu', speed: 45, waypoints: [{ x: 4450, y: 380 }, { x: 4450, y: 230 }] },
+  ],
+
+  questionBlocks: [
+    { x: 300, y: 270, contents: 'bull' },
+    { x: 1000, y: 270, contents: 'greenCandle' },
+    { x: 1048, y: 270, contents: 'bull' },
+    { x: 2650, y: 270, contents: 'bull' },
+    { x: 3600, y: 270, contents: 'hodlItem' },
+    { x: 5300, y: 270, contents: 'bull' },
+    { x: 5348, y: 270, contents: 'greenCandle' },
+    { x: 6000, y: 270, contents: 'bull' },
+    { x: 6950, y: 270, contents: 'bull' },
+    { x: 8300, y: 270, contents: 'hodlItem' },
+  ],
+
+  enemies: [
+    { type: 'baby', x: 900, y: 396, patrolLeft: 700, patrolRight: 1150 },
+    { type: 'baby', x: 1500, y: 396, patrolLeft: 1400, patrolRight: 1650 },
+    { type: 'baby', x: 2350, y: 396, patrolLeft: 2170, patrolRight: 2440 },
+    { type: 'flashTrader', x: 2900, y: 402, patrolLeft: 2700, patrolRight: 3200 },
+    { type: 'baby', x: 3800, y: 396, patrolLeft: 3550, patrolRight: 4100 },
+    { type: 'shortSeller', x: 4200, y: 250, patrolLeft: 4000, patrolRight: 4380 },
+    { type: 'baby', x: 4800, y: 396, patrolLeft: 4770, patrolRight: 4950 },
+    { type: 'baby', x: 5600, y: 396, patrolLeft: 5400, patrolRight: 5850 },
+    { type: 'flashTrader', x: 6100, y: 402, patrolLeft: 5900, patrolRight: 6450 },
+    { type: 'baby', x: 7500, y: 396, patrolLeft: 7420, patrolRight: 7650 },
+    { type: 'grizzly', x: 8100, y: 378, patrolLeft: 7900, patrolRight: 8400 },
+    { type: 'baby', x: 8700, y: 396, patrolLeft: 8600, patrolRight: 8900 },
+  ],
+
+  bulls: [
+    // Welcome line
+    { x: 160, y: 400 }, { x: 210, y: 400 }, { x: 410, y: 400 }, { x: 460, y: 400 },
+    { x: 310, y: 234 },
+    // Hot desks
+    { x: 560, y: 300 }, { x: 610, y: 300 },
+    { x: 790, y: 250 }, { x: 840, y: 250 },
+    { x: 1010, y: 234 }, { x: 1058, y: 234 },
+    { x: 1290, y: 290 }, { x: 1340, y: 290 },
+    // Arc over pit 1
+    { x: 1690, y: 310 }, { x: 1740, y: 290 }, { x: 1790, y: 310 },
+    // Scaling-law GPU stairs
+    { x: 2090, y: 320 }, { x: 2290, y: 280 }, { x: 2490, y: 240 }, { x: 2530, y: 240 },
+    { x: 2660, y: 234 },
+    { x: 2840, y: 290 }, { x: 2890, y: 290 },
+    { x: 3000, y: 400 }, { x: 3050, y: 400 }, { x: 3100, y: 400 },
+    // Arc over pit 2
+    { x: 3300, y: 310 }, { x: 3350, y: 290 }, { x: 3400, y: 310 },
+    // Context window
+    { x: 3740, y: 290 }, { x: 3790, y: 290 },
+    { x: 3990, y: 240 }, { x: 4040, y: 240 },
+    { x: 4290, y: 290 }, { x: 4340, y: 290 },
+    { x: 4690, y: 320 },
+    { x: 4850, y: 400 }, { x: 4900, y: 400 },
+    // Arc over pit 3
+    { x: 5000, y: 310 }, { x: 5050, y: 290 }, { x: 5100, y: 310 },
+    // Trading debut
+    { x: 5310, y: 234 }, { x: 5358, y: 234 },
+    { x: 5490, y: 290 }, { x: 5540, y: 290 },
+    { x: 5790, y: 240 }, { x: 5840, y: 240 },
+    { x: 6010, y: 234 },
+    { x: 6240, y: 290 }, { x: 6290, y: 290 },
+    // Arc over pit 4
+    { x: 6600, y: 310 }, { x: 6650, y: 290 }, { x: 6700, y: 310 },
+    // Opening bell victory run
+    { x: 6960, y: 234 },
+    { x: 7140, y: 320 }, { x: 7340, y: 270 },
+    { x: 7740, y: 290 }, { x: 7790, y: 290 },
+    { x: 8040, y: 240 }, { x: 8090, y: 240 },
+    { x: 8540, y: 290 }, { x: 8590, y: 290 },
+    { x: 8750, y: 400 }, { x: 8800, y: 400 }, { x: 8850, y: 400 }, { x: 8900, y: 400 },
+  ],
+
+  dividendCoins: [
+    { x: 815, y: 215 },    // Above the high desk
+    { x: 2505, y: 200 },   // Top of the GPU scaling curve
+    { x: 4490, y: 195 },   // Top of the compute elevator
+    { x: 7355, y: 230 },   // Above the last GPU rack
+  ],
+
+  shortSqueezePads: [
+    { x: 1560, y: 416 },   // Before pit 1
+    { x: 6480, y: 416 },   // Before pit 4
+  ],
+
+  memeSigns: [
+    { x: 140, text: 'ANT IPO DAY', color: '#FFB27A', h: 170, size: 22 },
+    { x: 1150, text: 'HELPFUL. HONEST. HODL.', color: '#FFE0B0', h: 150, size: 16 },
+    { x: 1950, text: 'SCALING LAWS ▲', color: '#00FF88', h: 160, size: 18 },
+    { x: 2700, text: 'MORE GPUS', color: '#FF9966', h: 140, size: 20 },
+    { x: 3550, text: 'CONTEXT WINDOW: 1M', color: '#88DDFF', h: 160, size: 16 },
+    { x: 4100, text: 'THINK STEP BY STEP', color: '#FFD700', h: 150, size: 16 },
+    { x: 4900, text: 'TOKENS GO BRRR', color: '#FF66CC', h: 140, size: 18 },
+    { x: 5420, text: 'PRICED $83', color: '#FFE0B0', h: 160, size: 20 },
+    { x: 6350, text: 'OPENED $111.50', color: '#00FF88', h: 150, size: 20 },
+    { x: 7050, text: 'BIGGEST IPO EVER', color: '#FFD700', h: 170, size: 18 },
+    { x: 7900, text: 'ALIGNED WITH GAINS', color: '#FFB27A', h: 140, size: 16 },
+    { x: 8650, text: 'ANT ▲ 34%', color: '#00FF88', h: 160, size: 22 },
+  ],
+};
+
 const LEVEL_1 = {
   name: "Wall Street",
   width: 9600,
@@ -5456,6 +5645,9 @@ const LEVEL_3 = {
   bossArena: { x: 13600, wallLeft: 13600, wallRight: 14200, y: 432 },
 };
 
+// Play order
+const ALL_LEVELS = [LEVEL_SPACEX, LEVEL_ANTHROPIC, LEVEL_1, LEVEL_2, LEVEL_3];
+
 function loadLevel(levelData) {
   const groundY = 432;
   const groundH = CONFIG.VIRTUAL_HEIGHT - groundY + 200;
@@ -6527,6 +6719,8 @@ class BackgroundRenderer {
       this._initCryptoMines();
     } else if (this.theme === 'launchPad') {
       this._initLaunchPad();
+    } else if (this.theme === 'aiCampus') {
+      this._initAiCampus();
     }
   }
 
@@ -6708,6 +6902,85 @@ class BackgroundRenderer {
       this._renderCryptoMines(ctx, camera, canvasWidth, canvasHeight, time);
     } else if (this.theme === 'launchPad') {
       this._renderLaunchPad(ctx, camera, canvasWidth, canvasHeight, time);
+    } else if (this.theme === 'aiCampus') {
+      this._renderAiCampus(ctx, camera, canvasWidth, canvasHeight, time);
+    }
+  }
+
+  // ==============================
+  //  AI Campus (Anthropic IPO level) — 2D fallback
+  // ==============================
+  _initAiCampus() {
+    this.layers = [
+      this._generateBuildings(14, 0.15, 0.55),
+      this._generateBuildings(11, 0.35, 0.8),
+    ];
+    this.nodes = [];
+    for (let i = 0; i < 40; i++) {
+      this.nodes.push({ x: Math.random() * 2400, y: 30 + Math.random() * 150, phase: Math.random() * 6 });
+    }
+    this.confetti = [];
+    for (let i = 0; i < 90; i++) {
+      this.confetti.push({ x: Math.random() * 1000, y: Math.random() * 540, v: 30 + Math.random() * 40,
+        c: ['#FFE0B0', '#D97757', '#FFFFFF', '#99FFBB'][i % 4] });
+    }
+  }
+
+  _renderAiCampus(ctx, camera, canvasWidth, canvasHeight, time) {
+    const grad = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+    grad.addColorStop(0, '#2a1c40');
+    grad.addColorStop(0.55, '#b8604a');
+    grad.addColorStop(1, '#ffc68a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // Setting sun
+    const sunX = canvasWidth * 0.35 - camera.x * 0.01;
+    ctx.globalAlpha = 0.25; ctx.fillStyle = '#FFA860';
+    ctx.beginPath(); ctx.arc(sunX, 300, 120, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1; ctx.fillStyle = '#FFC070';
+    ctx.beginPath(); ctx.arc(sunX, 300, 70, 0, Math.PI * 2); ctx.fill();
+
+    // Neural net
+    const W = 2400;
+    const pos = this.nodes.map(n => ({ x: ((n.x - camera.x * 0.05) % W + W) % W - 200, y: n.y, p: n.phase }));
+    ctx.strokeStyle = 'rgba(255,224,192,0.25)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < pos.length; i++) for (let j = i + 1; j < pos.length; j++) {
+      const dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y;
+      if (dx * dx + dy * dy < 150 * 150) { ctx.moveTo(pos[i].x, pos[i].y); ctx.lineTo(pos[j].x, pos[j].y); }
+    }
+    ctx.stroke();
+    for (const n of pos) {
+      ctx.globalAlpha = 0.6 + Math.sin(time * 2 + n.p) * 0.3;
+      ctx.fillStyle = '#FFD8B0';
+      ctx.beginPath(); ctx.arc(n.x, n.y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Warm skyline silhouettes
+    const tints = ['#5a3e36', '#7a5646'];
+    this.layers.forEach((layer, li) => {
+      const off = camera.x * layer.parallax;
+      ctx.fillStyle = tints[li];
+      for (const b of layer.buildings) {
+        let bx = ((b.x - off) % layer.totalWidth + layer.totalWidth) % layer.totalWidth - 100;
+        if (bx > canvasWidth) continue;
+        ctx.fillRect(bx, 432 - b.h, b.w, b.h);
+        ctx.fillStyle = 'rgba(255,220,170,0.5)';
+        for (let wy = 432 - b.h + 10; wy < 420; wy += 22) for (let wx = bx + 6; wx < bx + b.w - 8; wx += 16) {
+          if (((wx * 7 + wy * 3) | 0) % 5 < 2) ctx.fillRect(wx, wy, 6, 9);
+        }
+        ctx.fillStyle = tints[li];
+      }
+    });
+
+    // Ticker-tape confetti
+    for (const c of this.confetti) {
+      const y = (c.y + c.v * time) % canvasHeight;
+      const x = ((c.x + Math.sin(time + c.y) * 12 - camera.x * 0.2) % 1000 + 1000) % 1000 - 20;
+      ctx.fillStyle = c.c;
+      ctx.fillRect(x, y, 3, 5);
     }
   }
 
@@ -8047,6 +8320,10 @@ const W3D_THEMES = {
     sky: ['#020210', '#0a0a2a', '#3a1a48'], fog: '#2a1636', fogNear: 1800, fogFar: 8000,
     hemi: ['#a090ff', '#301830', 1.5], ambient: ['#403050', 0.7], sun: ['#ffe6cc', 2.8],
   },
+  aiCampus: {
+    sky: ['#2a1c40', '#b8604a', '#ffc68a'], fog: '#d88a64', fogNear: 1700, fogFar: 7600,
+    hemi: ['#ffd8b0', '#4a2a22', 1.6], ambient: ['#7a5a48', 0.8], sun: ['#ffd2a0', 2.9],
+  },
   tradingFloor: {
     sky: ['#1a1000', '#3a2a10', '#5a4424'], fog: '#3a2814', fogNear: 1400, fogFar: 5200,
     hemi: ['#ffd49a', '#3a2410', 1.7], ambient: ['#5a4020', 0.8], sun: ['#ffe0b0', 2.4],
@@ -8765,6 +9042,7 @@ class World3D {
     if (name === 'nightCity') this.buildNightCity(level);
     else if (name === 'launchPad') this.buildLaunchPad(level);
     else if (name === 'tradingFloor') this.buildTradingFloor(level);
+    else if (name === 'aiCampus') this.buildAiCampus(level);
     else if (name === 'cryptoMines') this.buildCryptoMines(level);
     this.flushMerged();
   }
@@ -8845,6 +9123,32 @@ class World3D {
         c.strokeRect(8, 20, w - 16, 90); c.strokeRect(8, 124, w - 16, 120);
       });
       rough = 0.35; metal = 0.1;
+    } else if (n === 'aiCampus') {
+      topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
+        // Sandstone plaza pavers
+        c.fillStyle = '#d9c3a0'; c.fillRect(0, 0, w, h);
+        this.noise(c, w, h, 700, ['#e4d0b0', '#cbb390', '#efdcbc']);
+        c.strokeStyle = '#a88c68'; c.lineWidth = 2;
+        c.strokeRect(1, 1, w - 2, h - 2);
+        c.beginPath(); c.moveTo(w / 2, 0); c.lineTo(w / 2, h / 2); c.moveTo(0, h / 2); c.lineTo(w, h / 2);
+        c.moveTo(w / 4, h / 2); c.lineTo(w / 4, h); c.moveTo(w * 0.75, h / 2); c.lineTo(w * 0.75, h); c.stroke();
+      });
+      frontTex = this.canvasTex(key + '_f', 128, 256, (c, w, h) => {
+        // Terracotta wall under a cream coping stone
+        c.fillStyle = '#a8553c'; c.fillRect(0, 0, w, h);
+        let row = 0;
+        for (let y = 14; y < h; y += 20, row++) {
+          for (let x = (row % 2) * -24; x < w; x += 48) {
+            const v = Math.floor(Math.random() * 18);
+            c.fillStyle = 'rgb(' + (176 + v) + ',' + (92 + v) + ',' + (64 + v) + ')';
+            c.fillRect(x + 1, y + 1, 46, 18);
+          }
+        }
+        this.noise(c, w, h, 400, ['rgba(0,0,0,0.18)', 'rgba(255,230,200,0.08)']);
+        c.fillStyle = '#f0e2c8'; c.fillRect(0, 0, w, 9);
+        c.fillStyle = '#c8b090'; c.fillRect(0, 9, w, 4);
+      });
+      rough = 0.85;
     } else {
       topTex = this.canvasTex(key + '_t', 128, 128, (c, w, h) => {
         c.fillStyle = '#2c1f48'; c.fillRect(0, 0, w, h);
@@ -8960,6 +9264,28 @@ class World3D {
         emissive: 0xffffff, emissiveMap: leds, emissiveIntensity: 1.6 });
       const top = new T.MeshStandardMaterial({ color: 0x2a2a3a, roughness: 0.3, metalness: 0.6 });
       mats = { box: [body, body, top, body, front, body], front };
+    } else if (type === 'gpu') {
+      // GPU compute rack: graphite chassis, cooling fins, glowing status LEDs
+      const face = this.canvasTex('gpuFace', 64, 64, (c, w, h) => {
+        c.fillStyle = '#26221f'; c.fillRect(0, 0, w, h);
+        for (let y = 6; y < h; y += 8) {
+          c.fillStyle = '#17140f'; c.fillRect(4, y, w - 8, 4);
+          c.fillStyle = '#3a342e'; c.fillRect(4, y + 4, w - 8, 1);
+        }
+      });
+      const leds = this.canvasTex('gpuLeds', 64, 64, (c, w, h) => {
+        c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+        for (let y = 6; y < h; y += 16) {
+          c.fillStyle = '#ff8a50'; c.fillRect(w - 12, y + 1, 4, 3);
+          c.fillStyle = (y / 16) % 2 ? '#ffe0b0' : '#ff6a30'; c.fillRect(w - 20, y + 1, 4, 3);
+        }
+      });
+      const body = new T.MeshStandardMaterial({ color: 0x2c2724, roughness: 0.35, metalness: 0.75 });
+      const front = new T.MeshStandardMaterial({ map: face, roughness: 0.45, metalness: 0.6,
+        emissive: 0xffffff, emissiveMap: leds, emissiveIntensity: 1.8 });
+      const top = new T.MeshStandardMaterial({ color: 0xd97757, roughness: 0.4, metalness: 0.3,
+        emissive: 0xd97757, emissiveIntensity: 0.25 });
+      mats = { box: [body, body, top, body, front, body] };
     } else if (type === 'crystal') {
       const m = new T.MeshStandardMaterial({ color: 0x7a10dd, emissive: 0x8a20ee, emissiveIntensity: 0.55,
         roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88 });
@@ -9034,6 +9360,14 @@ class World3D {
         D = 72;
         this.addBox(g, this.boxGeo(w, h, D, 64), M.box, 0, 0, w, h, 0, D);
         break;
+      case 'gpu': {
+        D = 76;
+        this.addBox(g, this.boxGeo(w, h, D, 64), M.box, 0, 0, w, h, 0, D);
+        const gl = this.glow('#ff9a60', w * 1.1, 0.22);
+        gl.position.set(w / 2, -Math.min(h, 40) / 2, 4);
+        g.add(gl);
+        break;
+      }
       case 'crystal': {
         D = 60;
         this.addBox(g, new T.BoxGeometry(w, h, D), M.box, 0, 0, w, h, 0, D);
@@ -9536,6 +9870,147 @@ class World3D {
     this.buildStars(1800);
     this.buildSkyBody(120, 0xfffff0, 0x666655, 300, 150, '#fffbe0', 0.94);
     this.buildSkyBody(90, 0xc1440e, 0x5a1a04, -260, 200, '#ff6633', 0.95);
+  }
+
+  // ------------------------------------------------------------
+  //  Theme: AI Campus (Anthropic IPO)
+  // ------------------------------------------------------------
+  buildAiCampus(level) {
+    const T = THREE;
+    const gd = this.groundDepth();
+    // Plaza, then a lawn running back to the city
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 2, -gd, -1050, this.groundMaterials()[2], 128);
+    const lawn = this.canvasTex('lawn', 128, 128, (c, w, h) => {
+      c.fillStyle = '#6e7a3e'; c.fillRect(0, 0, w, h);
+      this.noise(c, w, h, 1600, ['#7c8846', '#626e36', '#8a9450']);
+    });
+    this.floor(this.x0, this.x1, W3D_GROUND_Y + 4, -1050, -10000, this.mat('lawn', { map: lawn, roughness: 1 }), 400);
+
+    // Warm golden-hour skyline
+    this.buildSkyline([
+      { z: -1150, zJitter: 80, wMin: 160, wMax: 280, hMin: 200, hMax: 420, dMin: 140, dMax: 240, gapMin: 120, gapMax: 260, shadows: true },
+      { z: -2200, zJitter: 300, wMin: 200, wMax: 360, hMin: 360, hMax: 720, dMin: 200, dMax: 340, gapMin: 260, gapMax: 520, shadows: false },
+      { z: -4200, zJitter: 600, wMin: 260, wMax: 520, hMin: 500, hMax: 1300, dMin: 260, dMax: 480, gapMin: 400, gapMax: 900, shadows: false },
+    ], ['#7a5646', '#8a6450', '#6a4a3e', '#94705a'], 'campusWin', ['#FFE4B5', '#FFC890', '#FFF0D0'], W3D_GROUND_Y + 4);
+
+    // Giant IPO screens on the plaza
+    const screenTex = this.canvasTex(null, 2048, 128, (c, w, h) => {
+      c.fillStyle = '#120a08'; c.fillRect(0, 0, w, h);
+      c.font = 'bold 72px sans-serif'; c.textBaseline = 'middle';
+      const parts = [['ANT', '#ffffff'], [' ▲ $111.50 ', '#00FF88'], ['+34%', '#00FF88'], ['   ·   ', '#d97757'],
+        ['IPO PRICED $83', '#FFE0B0'], ['   ·   ', '#d97757'], ['LARGEST IPO ON RECORD', '#FFC890'], ['   ·   ', '#d97757']];
+      let x = 20;
+      while (x < w) for (const [txt, col] of parts) { c.fillStyle = col; c.fillText(txt, x, h / 2 + 4); x += c.measureText(txt).width; }
+    });
+    screenTex.repeat.set(0.5, 1);
+    const screenMat = new T.MeshBasicMaterial({ map: screenTex, toneMapped: false });
+    const frameMat = this.mat('screenFrame', { color: 0x2a2420, roughness: 0.4, metalness: 0.7 });
+    for (let x = 700; x < level.width; x += 2600) {
+      const sw = 620, sh = 78, sy = W3D_GROUND_Y - 300, z = -980;
+      const frame = new T.Mesh(new T.BoxGeometry(sw + 16, sh + 16, 10), frameMat);
+      frame.position.set(x, -(sy + sh / 2), z - 6);
+      const scr = new T.Mesh(new T.PlaneGeometry(sw, sh), screenMat);
+      scr.position.set(x, -(sy + sh / 2), z);
+      for (const px of [x - sw / 3, x + sw / 3]) {
+        const len = W3D_GROUND_Y - sy - sh;
+        const pole = new T.Mesh(new T.CylinderGeometry(5, 6, len, 10), frameMat);
+        pole.position.set(px, -(W3D_GROUND_Y - len / 2), z - 10);
+        pole.castShadow = true;
+        this.root.add(pole);
+      }
+      const halo = this.glow('#ffb070', sw * 1.4, 0.25);
+      halo.scale.y = sh * 4;
+      halo.position.set(x, -(sy + sh / 2), z - 14);
+      frame.castShadow = true;
+      this.root.add(frame, scr, halo);
+    }
+    this.tickers.push(t => { screenTex.offset.x = (t * 0.05) % 1; });
+
+    // Neural-net constellation in the sky with signals pulsing along its edges
+    const nodes = [];
+    for (let x = this.x0 - 3000; x < this.x1 + 3000; x += 260 + this.rng() * 220) {
+      nodes.push(new T.Vector3(x, 500 + this.rng() * 1500, -4600 - this.rng() * 900));
+    }
+    const edges = [];
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < Math.min(nodes.length, i + 5); j++) {
+        if (this.rng() < 0.55) edges.push([i, j]);
+      }
+    }
+    const lp = new Float32Array(edges.length * 6);
+    edges.forEach(([a, b], k) => {
+      lp.set([nodes[a].x, nodes[a].y, nodes[a].z, nodes[b].x, nodes[b].y, nodes[b].z], k * 6);
+    });
+    const lg = new T.BufferGeometry();
+    lg.setAttribute('position', new T.BufferAttribute(lp, 3));
+    const lineMat = new T.LineBasicMaterial({ color: 0xffe0c0, transparent: true, opacity: 0.28,
+      blending: T.AdditiveBlending, depthWrite: false, fog: false });
+    this.root.add(new T.LineSegments(lg, lineMat));
+    const nodeSprites = nodes.map((n, i) => {
+      const s = this.glow(i % 3 ? '#ffd8b0' : '#ff9a60', 70, 0.8);
+      s.material.fog = false;
+      s.position.copy(n);
+      this.root.add(s);
+      return s;
+    });
+    const pulses = [];
+    for (let i = 0; i < 70 && edges.length; i++) {
+      const s = this.glow('#fff0d8', 55, 0.95);
+      s.material.fog = false;
+      this.root.add(s);
+      pulses.push({ s, e: edges[Math.floor(this.rng() * edges.length)], t: this.rng(), v: 0.25 + this.rng() * 0.5 });
+    }
+    let lastT = 0;
+    this.tickers.push(t => {
+      const dt = Math.max(0, Math.min(0.1, t - lastT)); lastT = t;
+      lineMat.opacity = 0.24 + Math.sin(t * 0.8) * 0.06;
+      for (let i = 0; i < nodeSprites.length; i++) {
+        nodeSprites[i].material.opacity = 0.55 + Math.sin(t * 2 + i * 1.7) * 0.3;
+      }
+      for (const p of pulses) {
+        p.t += p.v * dt;
+        if (p.t >= 1) { // hop to an edge leaving this node, so signals flow through the net
+          p.t = 0;
+          const end = p.e[1];
+          const next = edges.filter(e => e[0] === end);
+          p.e = next.length ? next[Math.floor(Math.random() * next.length)] : edges[Math.floor(Math.random() * edges.length)];
+        }
+        p.s.position.lerpVectors(nodes[p.e[0]], nodes[p.e[1]], p.t);
+      }
+    });
+
+    // Ticker-tape confetti drifting down in front of the backdrop
+    const N = 700;
+    const cp = new Float32Array(N * 3), cc = new Float32Array(N * 3);
+    const seeds = [];
+    const palette = [[1, 0.85, 0.6], [0.85, 0.47, 0.34], [1, 1, 1], [0.6, 1, 0.75], [1, 0.75, 0.3]];
+    for (let i = 0; i < N; i++) {
+      seeds.push({ x: this.rng() * 3200, y: this.rng() * 1400, z: -40 - this.rng() * 600,
+        v: 40 + this.rng() * 50, sway: this.rng() * 6, amp: 10 + this.rng() * 30 });
+      cc.set(palette[i % palette.length], i * 3);
+    }
+    const cg = new T.BufferGeometry();
+    cg.setAttribute('position', new T.BufferAttribute(cp, 3));
+    cg.setAttribute('color', new T.BufferAttribute(cc, 3));
+    const confetti = new T.Points(cg, new T.PointsMaterial({ size: 6, sizeAttenuation: false, vertexColors: true,
+      transparent: true, opacity: 0.9, depthWrite: false }));
+    confetti.frustumCulled = false;
+    this.root.add(confetti);
+    this.tickers.push(t => {
+      const baseX = this.camX - 1600, topY = this.camY + 700;
+      for (let i = 0; i < N; i++) {
+        const s = seeds[i];
+        const fall = ((s.y + s.v * t) % 1400);
+        const x = (((s.x + Math.sin(t * 1.3 + s.sway) * s.amp) - (this.camX % 3200)) % 3200 + 3200) % 3200;
+        cp[i * 3] = baseX + x;
+        cp[i * 3 + 1] = topY - fall;
+        cp[i * 3 + 2] = s.z;
+      }
+      cg.attributes.position.needsUpdate = true;
+    });
+
+    // Low golden sun sinking behind the skyline
+    this.buildSkyBody(260, 0xffc070, 0xff8a40, -140, 95, '#ffa860', 0.96);
   }
 
   // ------------------------------------------------------------
@@ -10457,6 +10932,12 @@ const world3d = World3D.create(); // null -> classic 2D renderer
 const input = new InputHandler();
 input.bot = AutoPilot.Bot.input;
 const AUTOPLAY = /[?&]autoplay\b/.test(location.search);
+// ?level=N (1-based) starts a new game on that level, e.g. ?level=2 for the Anthropic IPO
+const START_LEVEL = (() => {
+  const m = /[?&]level=(\d+)/.exec(location.search);
+  const n = m ? parseInt(m[1], 10) - 1 : 0;
+  return n >= 0 && n < ALL_LEVELS.length ? n : 0;
+})();
 if (AUTOPLAY) AutoPilot.setEnabled(true);
 const touchControls = new TouchControls(canvas, input);
 const audio = new AudioManager();
@@ -10562,7 +11043,7 @@ function getScale() {
 // ==========================================
 function startGame(characterType, levelIndex) {
   currentLevelIndex = levelIndex || 0;
-  const LEVELS = [LEVEL_SPACEX, LEVEL_1, LEVEL_2, LEVEL_3];
+  const LEVELS = ALL_LEVELS;
   const levelData = LEVELS[currentLevelIndex];
   level = loadLevel(levelData);
   player = new Player(levelData.playerStart.x, levelData.playerStart.y, characterType);
@@ -10656,7 +11137,7 @@ function update(dt) {
   }
   // ?autoplay: the bot also clicks through menus so it can play unattended
   if (AUTOPLAY && AutoPilot.Bot.enabled) {
-    if (currentState === GameState.TITLE) startGame(Math.random() < 0.5 ? 'chad' : 'diana', 0);
+    if (currentState === GameState.TITLE) startGame(Math.random() < 0.5 ? 'chad' : 'diana', START_LEVEL);
     else if ((currentState === GameState.LEVEL_COMPLETE && levelCompleteScreen.animTime > 2.6) ||
              (currentState === GameState.GAME_OVER && gameOverScreen.animTime > 3)) {
       input.justPressed['Enter'] = true;
@@ -10704,7 +11185,7 @@ function anyInputThisFrame() {
 function startDemo() {
   demoMode = true;
   demoEndTimer = 0;
-  startGame(Math.random() < 0.5 ? 'chad' : 'diana', Math.floor(Math.random() * 4));
+  startGame(Math.random() < 0.5 ? 'chad' : 'diana', Math.floor(Math.random() * ALL_LEVELS.length));
   AutoPilot.setEnabled(true);
 }
 
@@ -10727,7 +11208,7 @@ function updateTitle(dt) {
   if (result === 'start') {
     audio.init();
     audio.playBackgroundMusic();
-    startGame(titleScreen.selectedCharacter);
+    startGame(titleScreen.selectedCharacter, START_LEVEL);
   }
 }
 
@@ -11369,7 +11850,7 @@ function updateLevelComplete(dt) {
   if (leaderboardPending) return;
   if ((input.wasPressed('Enter') || input.wasPressed('Space')) && levelCompleteScreen.animTime > 2.5) {
     currentLevelIndex++;
-    const LEVELS = [LEVEL_SPACEX, LEVEL_1, LEVEL_2, LEVEL_3];
+    const LEVELS = ALL_LEVELS;
     if (currentLevelIndex < LEVELS.length) {
       // Advance to next level — keep score, lives, totalBulls
       const levelData = LEVELS[currentLevelIndex];
@@ -11774,12 +12255,14 @@ function renderDebug() {
 // ==========================================
 // Symbols shown in the live ticker. SPCX (SpaceX) is included so it goes
 // live automatically once the feeds list it; until then it's pinned below.
-const TICKER_SYMBOLS = ['SPCX','AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META',
+const TICKER_SYMBOLS = ['ANT','SPCX','AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META',
   'JPM','V','DIS','BA','KO','GS','NFLX','AMD'];
 
 // SpaceX listed on Nasdaq 2026-06-12: closed $160.95, +19% on debut. Used as a
 // pin (feeds may lag a brand-new symbol) and as the hardcoded last resort.
 const SPCX_FALLBACK = { symbol: 'SPCX', price: 160.95, change: 19.2 };
+// Anthropic listed on Nasdaq 2026-11-19 as ANT: priced $83, opened $111.50 (+34%).
+const ANT_FALLBACK = { symbol: 'ANT', price: 111.50, change: 34.3 };
 
 // Public CORS relays, tried in order. Free stock endpoints don't send CORS
 // headers, so the browser needs a proxy; redundancy is what buys reliability.
@@ -11849,6 +12332,7 @@ async function fetchLiveStockData() {
       const quotes = await source(TICKER_SYMBOLS);
       if (quotes.length >= need) {
         if (!quotes.some(q => q.symbol === 'SPCX')) quotes.unshift({ ...SPCX_FALLBACK });
+        if (!quotes.some(q => q.symbol === 'ANT')) quotes.unshift({ ...ANT_FALLBACK });
         return quotes;
       }
     } catch (e) {
