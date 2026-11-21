@@ -578,6 +578,7 @@ class Camera {
     this.viewportHeight = viewportHeight;
     this.levelWidth = 0;
     this.levelHeight = 0;
+    this.levelTop = 0; // negative for levels that climb above the street
   }
 
   follow(target, dt) {
@@ -594,7 +595,7 @@ class Camera {
 
     // Clamp to level bounds
     this.x = Math.max(0, Math.min(this.x, this.levelWidth - this.viewportWidth));
-    this.y = Math.max(0, Math.min(this.y, this.levelHeight - this.viewportHeight));
+    this.y = Math.max(this.levelTop, Math.min(this.y, this.levelHeight - this.viewportHeight));
   }
 }
   </script>
@@ -1375,6 +1376,7 @@ class GoldBull {
 
   render(ctx, camera) {
     if (this.collected) return;
+    if (typeof world3d !== 'undefined' && world3d && world3d.active) return; // drawn in 3D
     const sx = this.x - camera.x;
     const sy = this.y - camera.y;
     if (sx + this.width < -10 || sx > CONFIG.VIRTUAL_WIDTH + 10) return;
@@ -1661,6 +1663,7 @@ class DividendCoin {
     const sy = this.y - camera.y;
     if (sx + this.width < -10 || sx > CONFIG.VIRTUAL_WIDTH + 10) return;
 
+    if (typeof world3d !== 'undefined' && world3d && world3d.active) return; // drawn in 3D
     const w = this.width;
     const h = this.height;
     const cx = sx + w / 2;
@@ -3626,7 +3629,7 @@ class Player {
 
     // Rocket-launch flames from a Short Squeeze pad — a fiery exhaust plume
     // shooting down from the character's feet while boosting upward.
-    if (this.rocketBoostTimer > 0) {
+    if (this.rocketBoostTimer > 0 && !(typeof world3d !== 'undefined' && world3d && world3d.active)) {
       const feetX = screenX + this.width / 2;
       const feetY = screenY + this.height;
       const flick = Math.sin(this.animTime * 45);
@@ -4263,16 +4266,21 @@ const LEVEL_SPACEX = {
 
 // LEVEL — Anthropic IPO. Anthropic listed on Nasdaq 2026-11-19 as ANT:
 // priced at $83, opened at $111.50 (+34%), the largest IPO on record.
-// Warm golden-hour campus: GPU clusters, office desks, a neural-net sky and
-// ticker-tape confetti. Difficulty sits between SpaceX and Wall Street.
+// A vertical level: climb the scaling-law terraces to the compute-cluster
+// roof, drop into the dip, scale the tower to ring the opening bell 730px
+// above the street, then hop down the rooftops to the goal.
+// Ground segment y = top surface (street is 432). Rules of thumb used below:
+// enemies stand at T-36 (baby) / T-30 (flash) / T-54 (grizzly), blocks at
+// T-162, ground bulls at T-32.
 const LEVEL_ANTHROPIC = {
   name: "Anthropic IPO",
   theme: 'aiCampus',
   width: 9400,
+  top: -700,   // camera may rise this far above the normal view
   playerStart: { x: 96, y: 370 },
   goalPosition: { x: 9100, y: 380 },
 
-  checkpoints: [{ x: 3300 }, { x: 6300 }],
+  checkpoints: [{ x: 3800, y: 240 }, { x: 5000, y: -300 }, { x: 7500 }],
 
   // Fallback ticker — ANT: IPO priced $83, opened $111.50 (+34%) on 2026-11-19
   tickerStocks: [
@@ -4291,38 +4299,55 @@ const LEVEL_ANTHROPIC = {
   ],
 
   groundSegments: [
-    // Section 1: The office (0-1700)
-    { x: 0, width: 1700 },
-    // Pit 1 (1700-1840, 140)
-    { x: 1840, width: 1460 },
-    // Pit 2 (3300-3450, 150) — GPU ferry optional
-    { x: 3450, width: 1550 },
-    // Pit 3 (5000-5150, 150)
-    { x: 5150, width: 1450 },
-    // Pit 4 (6600-6750, 150)
-    { x: 6750, width: 2650 },
+    { x: 0, width: 1500 },                    // The office plaza (street level)
+    { x: 1500, width: 260, y: 368 },          // Scaling-law terraces
+    { x: 1760, width: 260, y: 304 },
+    { x: 2020, width: 260, y: 240 },
+    { x: 2280, width: 480, y: 176 },          // Compute-cluster roof
+    // crevasse 2760-2890
+    { x: 2890, width: 260, y: 176 },
+    { x: 3150, width: 410 },                  // THE DIP (back down to the street)
+    { x: 3560, width: 440, y: 240 },          // Context-window plateau
+    // pit 4000-4140
+    { x: 4140, width: 420, y: 240 },          // Foot of the tower
+    { x: 4560, width: 840, y: -300 },         // THE TOWER — opening-bell roof
+    // gap 5400-5520
+    { x: 5520, width: 380, y: -120 },         // Rooftop descent
+    // gap 5900-6020
+    { x: 6020, width: 380, y: 80 },
+    // gap 6400-6520
+    { x: 6520, width: 380, y: 260 },
+    // gap 6900-7000
+    { x: 7000, width: 2400 },                 // Victory run on the street
   ],
 
   platforms: [
-    // Section 1 — the office: hot desks
+    // Office hot desks
     { x: 520, y: 340, w: 140, h: 16, type: 'desk' },
     { x: 760, y: 290, w: 130, h: 16, type: 'desk' },
     { x: 1250, y: 330, w: 140, h: 16, type: 'desk' },
-    // Section 2 — compute cluster: GPU racks climbing like a scaling curve
-    { x: 2050, y: 360, w: 110, h: 72, type: 'gpu' },
-    { x: 2250, y: 320, w: 110, h: 112, type: 'gpu' },
-    { x: 2450, y: 280, w: 110, h: 152, type: 'gpu' },
-    { x: 2800, y: 330, w: 140, h: 16, type: 'desk' },
-    // Section 3 — context window
-    { x: 3700, y: 330, w: 140, h: 16, type: 'ledge' },
-    { x: 3950, y: 280, w: 130, h: 16, type: 'desk' },
-    { x: 4250, y: 330, w: 130, h: 16, type: 'ledge' },
-    { x: 4650, y: 360, w: 110, h: 72, type: 'gpu' },
-    // Section 4 — the trading debut
-    { x: 5450, y: 330, w: 140, h: 16, type: 'desk' },
-    { x: 5750, y: 280, w: 130, h: 16, type: 'desk' },
-    { x: 6200, y: 330, w: 130, h: 16, type: 'ledge' },
-    // Section 5 — opening bell victory run
+    // GPU rack on the compute roof
+    { x: 2600, y: 104, w: 110, h: 72, type: 'gpu' },
+    // Climb out of the dip
+    { x: 3330, y: 372, w: 110, h: 60, type: 'gpu' },
+    { x: 3430, y: 310, w: 110, h: 16, type: 'desk' },
+    // Context window
+    { x: 3750, y: 138, w: 130, h: 16, type: 'ledge' },
+    // Tower climb — zig-zag desks (jump-through) up the tower's face
+    { x: 4450, y: 172, w: 100, h: 16, type: 'desk' },
+    { x: 4300, y: 104, w: 100, h: 16, type: 'desk' },
+    { x: 4450, y: 36, w: 100, h: 16, type: 'desk' },
+    { x: 4300, y: -32, w: 100, h: 16, type: 'desk' },
+    { x: 4450, y: -100, w: 100, h: 16, type: 'desk' },
+    { x: 4300, y: -168, w: 100, h: 16, type: 'desk' },
+    { x: 4450, y: -236, w: 100, h: 16, type: 'desk' },
+    // Opening-bell roof
+    { x: 4900, y: -402, w: 140, h: 16, type: 'desk' },
+    { x: 5100, y: -452, w: 130, h: 16, type: 'ledge' },
+    // Rooftop descent
+    { x: 5650, y: -222, w: 130, h: 16, type: 'ledge' },
+    { x: 6650, y: 158, w: 130, h: 16, type: 'desk' },
+    // Victory run
     { x: 7100, y: 360, w: 110, h: 72, type: 'gpu' },
     { x: 7300, y: 310, w: 110, h: 122, type: 'gpu' },
     { x: 7700, y: 330, w: 140, h: 16, type: 'desk' },
@@ -4331,108 +4356,116 @@ const LEVEL_ANTHROPIC = {
   ],
 
   movingPlatforms: [
-    // GPU ferry across pit 2 (pit is jumpable; this is a bonus ride)
-    { x: 3300, y: 360, w: 110, h: 18, type: 'gpu', speed: 50, waypoints: [{ x: 3290, y: 360 }, { x: 3390, y: 360 }] },
-    // Compute elevator up to a dividend coin
-    { x: 4450, y: 380, w: 110, h: 18, type: 'gpu', speed: 45, waypoints: [{ x: 4450, y: 380 }, { x: 4450, y: 230 }] },
+    // Compute elevator on the plateau, up to a dividend coin
+    { x: 3600, y: 222, w: 110, h: 18, type: 'gpu', speed: 45, waypoints: [{ x: 3600, y: 222 }, { x: 3600, y: 70 }] },
   ],
 
   questionBlocks: [
     { x: 300, y: 270, contents: 'bull' },
     { x: 1000, y: 270, contents: 'greenCandle' },
     { x: 1048, y: 270, contents: 'bull' },
-    { x: 2650, y: 270, contents: 'bull' },
-    { x: 3600, y: 270, contents: 'hodlItem' },
-    { x: 5300, y: 270, contents: 'bull' },
-    { x: 5348, y: 270, contents: 'greenCandle' },
-    { x: 6000, y: 270, contents: 'bull' },
-    { x: 6950, y: 270, contents: 'bull' },
+    { x: 2450, y: 14, contents: 'bull' },
+    { x: 3200, y: 270, contents: 'hodlItem' },
+    { x: 3700, y: 78, contents: 'bull' },
+    { x: 4200, y: 78, contents: 'greenCandle' },
+    { x: 4750, y: -462, contents: 'bull' },
+    { x: 4798, y: -462, contents: 'bull' },
+    { x: 5300, y: -462, contents: 'hodlItem' },
+    { x: 6200, y: -82, contents: 'bull' },
+    { x: 7600, y: 270, contents: 'bull' },
     { x: 8300, y: 270, contents: 'hodlItem' },
   ],
 
   enemies: [
     { type: 'baby', x: 900, y: 396, patrolLeft: 700, patrolRight: 1150 },
-    { type: 'baby', x: 1500, y: 396, patrolLeft: 1400, patrolRight: 1650 },
-    { type: 'baby', x: 2350, y: 396, patrolLeft: 2170, patrolRight: 2440 },
-    { type: 'flashTrader', x: 2900, y: 402, patrolLeft: 2700, patrolRight: 3200 },
-    { type: 'baby', x: 3800, y: 396, patrolLeft: 3550, patrolRight: 4100 },
-    { type: 'shortSeller', x: 4200, y: 250, patrolLeft: 4000, patrolRight: 4380 },
-    { type: 'baby', x: 4800, y: 396, patrolLeft: 4770, patrolRight: 4950 },
-    { type: 'baby', x: 5600, y: 396, patrolLeft: 5400, patrolRight: 5850 },
-    { type: 'flashTrader', x: 6100, y: 402, patrolLeft: 5900, patrolRight: 6450 },
+    { type: 'baby', x: 2400, y: 140, patrolLeft: 2300, patrolRight: 2590 },
+    { type: 'flashTrader', x: 3000, y: 146, patrolLeft: 2900, patrolRight: 3140 },
+    { type: 'baby', x: 3250, y: 396, patrolLeft: 3165, patrolRight: 3320 },
+    { type: 'baby', x: 3850, y: 204, patrolLeft: 3740, patrolRight: 3990 },
+    { type: 'shortSeller', x: 4200, y: 150, patrolLeft: 4150, patrolRight: 4280 },
+    { type: 'baby', x: 4850, y: -336, patrolLeft: 4680, patrolRight: 5020 },
+    { type: 'baby', x: 5200, y: -336, patrolLeft: 5060, patrolRight: 5390 },
+    { type: 'flashTrader', x: 5700, y: -150, patrolLeft: 5540, patrolRight: 5890 },
+    { type: 'baby', x: 6200, y: 44, patrolLeft: 6040, patrolRight: 6390 },
+    { type: 'baby', x: 6700, y: 224, patrolLeft: 6540, patrolRight: 6890 },
     { type: 'baby', x: 7500, y: 396, patrolLeft: 7420, patrolRight: 7650 },
     { type: 'grizzly', x: 8100, y: 378, patrolLeft: 7900, patrolRight: 8400 },
     { type: 'baby', x: 8700, y: 396, patrolLeft: 8600, patrolRight: 8900 },
   ],
 
   bulls: [
-    // Welcome line
+    // Office
     { x: 160, y: 400 }, { x: 210, y: 400 }, { x: 410, y: 400 }, { x: 460, y: 400 },
     { x: 310, y: 234 },
-    // Hot desks
-    { x: 560, y: 300 }, { x: 610, y: 300 },
-    { x: 790, y: 250 }, { x: 840, y: 250 },
-    { x: 1010, y: 234 }, { x: 1058, y: 234 },
-    { x: 1290, y: 290 }, { x: 1340, y: 290 },
-    // Arc over pit 1
-    { x: 1690, y: 310 }, { x: 1740, y: 290 }, { x: 1790, y: 310 },
-    // Scaling-law GPU stairs
-    { x: 2090, y: 320 }, { x: 2290, y: 280 }, { x: 2490, y: 240 }, { x: 2530, y: 240 },
-    { x: 2660, y: 234 },
-    { x: 2840, y: 290 }, { x: 2890, y: 290 },
-    { x: 3000, y: 400 }, { x: 3050, y: 400 }, { x: 3100, y: 400 },
-    // Arc over pit 2
-    { x: 3300, y: 310 }, { x: 3350, y: 290 }, { x: 3400, y: 310 },
+    { x: 560, y: 300 }, { x: 610, y: 300 }, { x: 790, y: 250 }, { x: 840, y: 250 },
+    { x: 1010, y: 234 }, { x: 1058, y: 234 }, { x: 1290, y: 290 }, { x: 1340, y: 290 },
+    // Up the terraces
+    { x: 1580, y: 336 }, { x: 1650, y: 336 }, { x: 1840, y: 272 }, { x: 1910, y: 272 },
+    { x: 2100, y: 208 }, { x: 2170, y: 208 },
+    // Compute roof + crevasse arc
+    { x: 2330, y: 144 }, { x: 2380, y: 144 }, { x: 2460, y: -22 },
+    { x: 2640, y: 64 }, { x: 2690, y: 64 },
+    { x: 2770, y: 110 }, { x: 2825, y: 90 }, { x: 2880, y: 110 },
+    { x: 2950, y: 144 }, { x: 3000, y: 144 }, { x: 3050, y: 144 },
+    // Buy the dip
+    { x: 3170, y: 160 }, { x: 3215, y: 215 },
+    { x: 3370, y: 332 }, { x: 3470, y: 270 }, { x: 3510, y: 270 },
     // Context window
-    { x: 3740, y: 290 }, { x: 3790, y: 290 },
-    { x: 3990, y: 240 }, { x: 4040, y: 240 },
-    { x: 4290, y: 290 }, { x: 4340, y: 290 },
-    { x: 4690, y: 320 },
-    { x: 4850, y: 400 }, { x: 4900, y: 400 },
-    // Arc over pit 3
-    { x: 5000, y: 310 }, { x: 5050, y: 290 }, { x: 5100, y: 310 },
-    // Trading debut
-    { x: 5310, y: 234 }, { x: 5358, y: 234 },
-    { x: 5490, y: 290 }, { x: 5540, y: 290 },
-    { x: 5790, y: 240 }, { x: 5840, y: 240 },
-    { x: 6010, y: 234 },
-    { x: 6240, y: 290 }, { x: 6290, y: 290 },
-    // Arc over pit 4
-    { x: 6600, y: 310 }, { x: 6650, y: 290 }, { x: 6700, y: 310 },
-    // Opening bell victory run
-    { x: 6960, y: 234 },
-    { x: 7140, y: 320 }, { x: 7340, y: 270 },
-    { x: 7740, y: 290 }, { x: 7790, y: 290 },
-    { x: 8040, y: 240 }, { x: 8090, y: 240 },
-    { x: 8540, y: 290 }, { x: 8590, y: 290 },
+    { x: 3710, y: 42 }, { x: 3760, y: 98 }, { x: 3810, y: 98 },
+    { x: 3900, y: 208 }, { x: 3950, y: 208 },
+    { x: 4010, y: 150 }, { x: 4070, y: 130 }, { x: 4130, y: 150 },
+    { x: 4210, y: 42 }, { x: 4250, y: 208 },
+    // Climb the tower
+    { x: 4490, y: 132 }, { x: 4340, y: 64 }, { x: 4490, y: -4 }, { x: 4340, y: -72 },
+    { x: 4490, y: -140 }, { x: 4340, y: -208 }, { x: 4490, y: -276 },
+    // Opening-bell roof
+    { x: 4620, y: -332 }, { x: 4670, y: -332 }, { x: 4760, y: -498 }, { x: 4808, y: -498 },
+    { x: 4940, y: -442 }, { x: 4990, y: -442 }, { x: 5140, y: -492 }, { x: 5190, y: -492 },
+    { x: 5310, y: -498 }, { x: 5360, y: -332 },
+    // Rooftop descent
+    { x: 5420, y: -340 }, { x: 5470, y: -300 },
+    { x: 5560, y: -152 }, { x: 5610, y: -152 }, { x: 5690, y: -262 }, { x: 5740, y: -262 }, { x: 5850, y: -152 },
+    { x: 5920, y: -130 }, { x: 5970, y: -60 },
+    { x: 6060, y: 48 }, { x: 6110, y: 48 }, { x: 6270, y: -10 }, { x: 6300, y: 48 }, { x: 6350, y: 48 },
+    { x: 6420, y: 80 }, { x: 6470, y: 150 },
+    { x: 6560, y: 228 }, { x: 6610, y: 228 }, { x: 6690, y: 118 }, { x: 6740, y: 118 }, { x: 6850, y: 228 },
+    { x: 6920, y: 260 }, { x: 6970, y: 330 },
+    // Victory run
+    { x: 7140, y: 320 }, { x: 7340, y: 270 }, { x: 7610, y: 234 },
+    { x: 7740, y: 290 }, { x: 7790, y: 290 }, { x: 8040, y: 240 }, { x: 8090, y: 240 },
+    { x: 8310, y: 234 }, { x: 8540, y: 290 }, { x: 8590, y: 290 },
     { x: 8750, y: 400 }, { x: 8800, y: 400 }, { x: 8850, y: 400 }, { x: 8900, y: 400 },
   ],
 
   dividendCoins: [
-    { x: 815, y: 215 },    // Above the high desk
-    { x: 2505, y: 200 },   // Top of the GPU scaling curve
-    { x: 4490, y: 195 },   // Top of the compute elevator
-    { x: 7355, y: 230 },   // Above the last GPU rack
+    { x: 815, y: 215 },     // Above the high desk
+    { x: 2640, y: 40 },     // On the GPU rack
+    { x: 3640, y: 30 },     // Top of the compute elevator
+    { x: 4960, y: -470 },   // Highest point in the game
+    { x: 7355, y: 230 },    // Above the last GPU rack
   ],
 
   shortSqueezePads: [
-    { x: 1560, y: 416 },   // Before pit 1
-    { x: 6480, y: 416 },   // Before pit 4
+    { x: 1350, y: 416 },    // Rocket up the terraces
+    { x: 3270, y: 416 },    // Launch out of the dip
   ],
 
   memeSigns: [
     { x: 140, text: 'ANT IPO DAY', color: '#FFB27A', h: 170, size: 22 },
     { x: 1150, text: 'HELPFUL. HONEST. HODL.', color: '#FFE0B0', h: 150, size: 16 },
-    { x: 1950, text: 'SCALING LAWS ▲', color: '#00FF88', h: 160, size: 18 },
-    { x: 2700, text: 'MORE GPUS', color: '#FF9966', h: 140, size: 20 },
-    { x: 3550, text: 'CONTEXT WINDOW: 1M', color: '#88DDFF', h: 160, size: 16 },
-    { x: 4100, text: 'THINK STEP BY STEP', color: '#FFD700', h: 150, size: 16 },
-    { x: 4900, text: 'TOKENS GO BRRR', color: '#FF66CC', h: 140, size: 18 },
-    { x: 5420, text: 'PRICED $83', color: '#FFE0B0', h: 160, size: 20 },
-    { x: 6350, text: 'OPENED $111.50', color: '#00FF88', h: 150, size: 20 },
-    { x: 7050, text: 'BIGGEST IPO EVER', color: '#FFD700', h: 170, size: 18 },
-    { x: 7900, text: 'ALIGNED WITH GAINS', color: '#FFB27A', h: 140, size: 16 },
-    { x: 8650, text: 'ANT ▲ 34%', color: '#00FF88', h: 160, size: 22 },
+    { x: 1890, base: 304, text: 'SCALING LAWS ▲', color: '#00FF88', h: 140, size: 16 },
+    { x: 2520, base: 176, text: 'MORE GPUS', color: '#FF9966', h: 150, size: 20 },
+    { x: 3020, base: 176, text: 'TOKENS GO BRRR', color: '#FF66CC', h: 130, size: 16 },
+    { x: 3390, text: 'BUY THE DIP', color: '#FF6688', h: 200, size: 20 },
+    { x: 3880, base: 240, text: 'CONTEXT WINDOW: 1M', color: '#88DDFF', h: 150, size: 14 },
+    { x: 4250, base: 240, text: 'THINK STEP BY STEP', color: '#FFD700', h: 280, size: 14 },
+    { x: 4660, base: -300, text: 'OPENING BELL', color: '#FFD700', h: 120, size: 20 },
+    { x: 5250, base: -300, text: 'PRICED $83', color: '#FFE0B0', h: 130, size: 18 },
+    { x: 5760, base: -120, text: 'OPENED $111.50', color: '#00FF88', h: 140, size: 16 },
+    { x: 6250, base: 80, text: 'BIGGEST IPO EVER', color: '#FFD700', h: 140, size: 16 },
+    { x: 6760, base: 260, text: 'ALIGNED WITH GAINS', color: '#FFB27A', h: 140, size: 14 },
+    { x: 7500, text: 'ANT ▲ 34%', color: '#00FF88', h: 170, size: 22 },
+    { x: 8700, text: 'NUMBER GO UP', color: '#00FF88', h: 160, size: 18 },
   ],
 };
 
@@ -5662,7 +5695,8 @@ function loadLevel(levelData) {
     collectibles: [],
     shortSqueezePads: [],
     movingPlatforms: [],
-    checkpoints: (levelData.checkpoints || []).map(c => new Checkpoint(c.x, 432)),
+    checkpoints: (levelData.checkpoints || []).map(c => new Checkpoint(c.x, c.y || 432)),
+    top: levelData.top || 0,
     memeSigns: levelData.memeSigns || [],
     marketCrashZones: levelData.marketCrashZones ? levelData.marketCrashZones.map(z => ({ ...z, triggered: false })) : [],
     redCandleZones: levelData.redCandleZones || [],
@@ -5676,7 +5710,9 @@ function loadLevel(levelData) {
 
   // Create ground platforms from segments
   for (const seg of levelData.groundSegments) {
-    const ground = new Platform(seg.x, groundY, seg.width, groundH, 'ground');
+    // seg.y raises a segment above the street (terraces, rooftops, towers)
+    const top = seg.y !== undefined ? seg.y : groundY;
+    const ground = new Platform(seg.x, top, seg.width, groundH + (groundY - top), 'ground');
     level.solids.push(ground);
     level.platforms.push(ground);
   }
@@ -8583,11 +8619,17 @@ class Investor3D {
       spin = p.deadT * 9;
       headTilt = -0.3;
     } else if (p.crouching) {
-      hipL = hipR = -1.25; kneeL = kneeR = 2.0;
-      shL = shR = -0.5; elL = elR = -1.1;
-      lean = 0.45; bob = -8.5;
-      headTilt = -0.25;
-      if (p.state === 'crouch_ready') bob += Math.sin(t * 30) * 0.4;
+      // Deep athletic squat: knees forward, chest over the knees, eyes ahead,
+      // briefcase / tablet hugged in. Feet stay planted (bob = leg drop).
+      hipL = -1.5; hipR = -1.4; kneeL = 2.4; kneeR = 2.3;
+      shL = -0.95; elL = -1.25; armOutL = 0.22;          // free hand on the knee
+      shR = -0.35; elR = -0.55; armOutR = 0.32;          // briefcase / tablet held low at the side
+      lean = 0.6; bob = -11.6;
+      headTilt = -0.3;
+      if (p.state === 'crouch_ready') { // coiled spring: quiver before the super jump
+        bob += Math.sin(t * 38) * 0.5;
+        lean += Math.sin(t * 38 + 1) * 0.03;
+      }
     } else if (!p.onGround) {
       if (p.vy < 0) {         // rising: tuck one knee, punch the sky
         hipL = -1.3; kneeL = 1.5; hipR = 0.35; kneeR = 0.5;
@@ -8610,7 +8652,7 @@ class Investor3D {
       elL = elR = -1.0;
       bob = Math.abs(Math.cos(ph)) * 1.6 - 0.6;
       lean = 0.18;
-      headTilt = 0.05;
+      headTilt = -0.06;
     } else {                  // idle: breathe, glance around
       const b = Math.sin(t * 2.2);
       bob = b * 0.35;
@@ -8628,7 +8670,10 @@ class Investor3D {
     A[1].elbow.rotation.x = elR;
     this.body.position.y = bob;
     this.torso.rotation.x = lean;
-    this.head.rotation.set(headTilt - lean * 0.5, headTurn, 0);
+    // The head rides on top of the torso, so it follows the lean instead of
+    // floating behind a bent-over body, and partly counter-tilts to look ahead.
+    this.head.position.set(0, 18 + 19.5 * Math.cos(lean), 19.5 * Math.sin(lean));
+    this.head.rotation.set(headTilt + lean * 0.5, headTurn, 0);
     this.body.rotation.y = spin;
     this.headband.visible = !!p.headband;
     const e = p.powered ? 0.35 + Math.sin(t * 6) * 0.15 : 0;
@@ -8694,6 +8739,26 @@ class World3D {
     // Soft fill from the camera side so characters and front faces read clearly
     this.fill = new T.DirectionalLight(0xfff4e8, 0.9);
     this.scene.add(this.hemi, this.ambient, this.sun, this.sun.target, this.fill, this.fill.target);
+
+    // Small studio environment so metals (gold bulls, coins, racks) get real
+    // reflections instead of rendering flat and dark
+    try {
+      const envScene = new T.Scene();
+      const sky = new T.Mesh(new T.SphereGeometry(50, 32, 16), new T.ShaderMaterial({
+        side: T.BackSide,
+        vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: 'varying vec3 vP; void main(){ float h = normalize(vP).y; vec3 c = mix(vec3(0.18,0.14,0.12), vec3(1.0,0.95,0.85), smoothstep(-0.2, 0.9, h)); gl_FragColor = vec4(c, 1.0); }',
+      }));
+      envScene.add(sky);
+      for (const [x, y, z, s2] of [[30, 25, 10, 14], [-35, 10, 20, 10], [0, 40, -30, 18], [20, -5, -35, 8]]) {
+        const panel = new T.Mesh(new T.PlaneGeometry(s2, s2), new T.MeshBasicMaterial({ color: 0xffffff, side: T.DoubleSide }));
+        panel.position.set(x, y, z); panel.lookAt(0, 0, 0);
+        envScene.add(panel);
+      }
+      const pm = new T.PMREMGenerator(this.renderer);
+      this.envMap = pm.fromScene(envScene, 0.02).texture;
+      pm.dispose();
+    } catch (e) { this.envMap = null; }
   }
 
   // ------------------------------------------------------------
@@ -8731,7 +8796,7 @@ class World3D {
     const standH = player._getStandingHeight();
     const k = player.width / CONFIG.PLAYER_WIDTH;
     let sx = k, sy = standH / CONFIG.PLAYER_HEIGHT;
-    if (player.crouching) { sy *= 0.82; sx *= 1.08; }
+    if (player.crouching) { sy *= 0.92; sx *= 1.03; }
     else if (!player.deathAnimating) {
       if (player.landSquashTimer > 0 && player.onGround) {
         const q = player.landSquashTimer / 0.12;
@@ -8749,11 +8814,157 @@ class World3D {
     this.facing += (target - this.facing) * Math.min(1, dt * 14);
     r.rotation.y = this.facing * 0.62;
 
+    // Rocket-boost plume from a Short Squeeze pad
+    if (!this.boostFlame) {
+      this.boostFlame = this.makeFlame(46, 78, 3.3);
+      this.boostFlame.material.__persist = true;
+      this.boostCore = this.makeFlame(22, 34, 9.1, 0xffd8a0);
+      this.boostCore.material.uniforms.uPower.value = 0.55;
+      this.boostCore.material.__persist = true;
+      this.boostGlow = this.glow('#ff9030', 120, 0.7);
+      this.scene.add(this.boostFlame, this.boostCore, this.boostGlow);
+    }
+    const boost = player.rocketBoostTimer > 0 && !player.deathAnimating;
+    this.boostFlame.visible = this.boostCore.visible = this.boostGlow.visible = boost;
+    if (boost) {
+      const fx = player.x + player.width / 2, fy = -(player.y + player.height) + 2;
+      const k = 0.7 + Math.min(1, player.rocketBoostTimer / 0.7) * 0.6;
+      this.boostFlame.position.set(fx, fy, -2);
+      this.boostFlame.scale.set(1, k, 1);
+      this.boostCore.position.set(fx, fy, -1);
+      this.boostCore.scale.set(1, k, 1);
+      this.boostGlow.position.set(fx, fy - 20, -4);
+      this.boostGlow.material.opacity = 0.5 * k;
+    }
+
     inv.pose({
       state: player.state, t: player.animTime, vy: player.vy, onGround: player.onGround,
       crouching: player.crouching, dead: player.deathAnimating, deadT: player.deathAnimTimer,
       headband: player.hasHeadband, powered: player.powered,
     });
+  }
+
+  // ------------------------------------------------------------
+  //  3D gold bulls and dividend coins (the 2D sprites step aside)
+  // ------------------------------------------------------------
+  collectibleAssets() {
+    if (this.collectAssets) return this.collectAssets;
+    const T = THREE;
+    // Merge primitive parts into one non-indexed geometry
+    const merge = (parts) => {
+      const pos = [], nor = [];
+      for (const g0 of parts) {
+        const g = g0.index ? g0.toNonIndexed() : g0;
+        const P = g.attributes.position, N = g.attributes.normal;
+        for (let i = 0; i < P.count; i++) { pos.push(P.getX(i), P.getY(i), P.getZ(i)); nor.push(N.getX(i), N.getY(i), N.getZ(i)); }
+      }
+      const out = new T.BufferGeometry();
+      out.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      out.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+      return out;
+    };
+    const P = (g, x, y, z, rx, ry, rz, sx, sy, sz) => {
+      if (sx) g.scale(sx, sy, sz);
+      if (rx) g.rotateX(rx); if (ry) g.rotateY(ry); if (rz) g.rotateZ(rz);
+      g.translate(x, y, z);
+      return g;
+    };
+    // Charging bull, facing +x, ~30 long x 26 tall, feet at y = -13
+    const body = [
+      P(new T.SphereGeometry(8, 18, 12), -1, 0, 0, 0, 0, 0, 1.45, 0.95, 0.85),         // barrel
+      P(new T.SphereGeometry(7.5, 16, 12), 4, 2.5, 0, 0, 0, 0, 1, 1.05, 0.95),          // shoulder hump
+      P(new T.SphereGeometry(4.6, 16, 12), 11.5, 2, 0, 0, 0, -0.5, 1.15, 0.9, 0.85),    // head, lowered to charge
+      P(new T.SphereGeometry(2.8, 12, 8), 14.5, -0.8, 0, 0, 0, 0, 1, 0.8, 1.05),        // muzzle
+      P(new T.CylinderGeometry(1.7, 1.3, 8, 8), -7.5, -8.5, 3.2, 0, 0, 0.25),           // legs (galloping)
+      P(new T.CylinderGeometry(1.7, 1.3, 8, 8), -5.5, -8.5, -3.2, 0, 0, -0.2),
+      P(new T.CylinderGeometry(1.8, 1.3, 8, 8), 6.5, -8.5, 3.2, 0, 0, -0.35),
+      P(new T.CylinderGeometry(1.8, 1.3, 8, 8), 8.5, -8.5, -3.2, 0, 0, 0.3),
+      P(new T.CylinderGeometry(0.6, 0.3, 7, 6), -13, 2, 0, 0, 0, 0.9),                  // tail
+      P(new T.SphereGeometry(1.4, 8, 6), -16, 5, 0),                                     // tail tuft
+    ];
+    const horns = [];
+    for (const side of [-1, 1]) {
+      horns.push(P(new T.ConeGeometry(1.3, 7, 10), 11.5, 7, side * 4.5, side * -0.9, 0, -0.5));
+      horns.push(P(new T.SphereGeometry(1.5, 8, 6), 11.2, 5, side * 3));
+    }
+    const env = this.envMap;
+    const gold = new T.MeshStandardMaterial({ color: 0xffc83a, metalness: 1, roughness: 0.22, envMap: env, envMapIntensity: 1.4,
+      emissive: 0x7a4a00, emissiveIntensity: env ? 0.25 : 0.6 });
+    const horn = new T.MeshStandardMaterial({ color: 0xfff1c0, metalness: 0.9, roughness: 0.15, envMap: env, envMapIntensity: 1.6,
+      emissive: 0x806020, emissiveIntensity: 0.3 });
+    const coinTex = this.canvasTex('coinFace', 128, 128, (c, w, h) => {
+      const g = c.createRadialGradient(w * 0.4, h * 0.35, 4, w / 2, h / 2, w / 2);
+      g.addColorStop(0, '#7dffb8'); g.addColorStop(0.7, '#10c060'); g.addColorStop(1, '#067a3a');
+      c.fillStyle = g; c.beginPath(); c.arc(w / 2, h / 2, w / 2, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#d8ffe8'; c.lineWidth = 5; c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 9, 0, Math.PI * 2); c.stroke();
+      c.fillStyle = '#ffffff'; c.font = 'bold 76px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.shadowColor = 'rgba(0,60,20,0.8)'; c.shadowBlur = 6; c.fillText('$', w / 2, h / 2 + 4);
+    }, { repeat: false });
+    const coinFace = new T.MeshStandardMaterial({ map: coinTex, metalness: 0.6, roughness: 0.3, envMap: env,
+      emissive: 0xffffff, emissiveMap: coinTex, emissiveIntensity: 0.35 });
+    const coinRim = new T.MeshStandardMaterial({ color: 0x18d070, metalness: 0.9, roughness: 0.25, envMap: env, emissive: 0x064a20 });
+    const coinGeo = new T.CylinderGeometry(11, 11, 3.2, 32);
+    coinGeo.rotateX(Math.PI / 2);
+    this.collectAssets = {
+      bullGeo: merge(body), hornGeo: merge(horns), gold, horn,
+      coinGeo, coinMats: [coinRim, coinFace, coinFace],
+    };
+    return this.collectAssets;
+  }
+
+  syncCollectibles(level, time) {
+    if (!this.collectMeshes) return;
+    const A = this.collectibleAssets();
+    const T = THREE;
+    const seen = new Set();
+    const x0 = this.camX - 760, x1 = this.camX + 760;
+    for (const c of level.collectibles) {
+      if (c.collected || (c.type !== 'bull' && c.type !== 'dividend')) continue;
+      if (c.x < x0 || c.x > x1) continue;
+      seen.add(c);
+      let g = this.collectMeshes.get(c);
+      if (!g) {
+        g = new T.Group();
+        const spinner = new T.Group();
+        g.add(spinner);
+        if (c.type === 'bull') {
+          const b = new T.Mesh(A.bullGeo, A.gold), h = new T.Mesh(A.hornGeo, A.horn);
+          b.castShadow = h.castShadow = true;
+          spinner.add(b, h);
+          const halo = this.glow('#ffcc33', 64, 0.35);
+          halo.position.z = -6;
+          g.add(halo);
+          g.userData.halo = halo;
+        } else {
+          const coin = new T.Mesh(A.coinGeo, A.coinMats);
+          coin.castShadow = true;
+          spinner.add(coin);
+          const halo = this.glow('#33ff99', 70, 0.45);
+          halo.position.z = -6;
+          g.add(halo);
+          g.userData.halo = halo;
+        }
+        g.userData.spinner = spinner;
+        g.userData.phase = (c.x * 0.37) % 6.28;
+        this.root.add(g);
+        this.collectMeshes.set(c, g);
+      }
+      g.position.set(c.x + c.width / 2, -(c.y + c.height / 2), -10);
+      const ph = g.userData.phase;
+      const sp = g.userData.spinner;
+      if (c.type === 'bull') {
+        sp.rotation.y = Math.sin(time * 1.6 + ph) * 0.9 - 0.25;   // turn to show off the profile
+        sp.rotation.z = Math.sin(time * 3.2 + ph) * 0.05;
+      } else {
+        sp.rotation.y = time * 2.6 + ph;                          // spinning coin
+      }
+      g.userData.halo.material.opacity = 0.3 + Math.sin(time * 4 + ph) * 0.1;
+    }
+    for (const [c, g] of this.collectMeshes) {
+      if (seen.has(c)) continue;
+      this.root.remove(g);
+      this.collectMeshes.delete(c);
+    }
   }
 
   // Character-select portrait, rendered on a small offscreen renderer and
@@ -8810,7 +9021,9 @@ class World3D {
 
     for (const d of this.dynamics) d(time, dt);
     for (const t of this.tickers) t(time, dt);
+    if (this.flameMats) for (const m of this.flameMats) m.uniforms.uTime.value = time;
     this.syncPlayer(player, time, dt);
+    this.syncCollectibles(level, time);
 
     this.renderer.render(this.scene, this.cam);
   }
@@ -8940,6 +9153,67 @@ class World3D {
     this.merged.clear();
   }
 
+  // ------------------------------------------------------------
+  //  Fire: an animated shader flame (fbm noise, white-hot core fading to
+  //  orange and red at ragged edges). The quad's top edge is the nozzle and
+  //  the flame licks downward along -y; rotate the mesh to aim it.
+  // ------------------------------------------------------------
+  flameMaterial(seed, tint) {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uSeed: { value: seed || 0 }, uPower: { value: 1 },
+        uTint: { value: new THREE.Color(tint || 0xffffff) } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: [
+        'uniform float uTime; uniform float uSeed; uniform float uPower; uniform vec3 uTint; varying vec2 vUv;',
+        'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+        'float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);',
+        '  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }',
+        'float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + 1.7; a *= 0.5; } return v; }',
+        'void main(){',
+        '  float d = 1.0 - vUv.y;                       // 0 at the nozzle, 1 at the tip',
+        '  float x = (vUv.x - 0.5) * 2.0;',
+        '  float t = uTime * 7.0 + uSeed;',
+        '  float n = fbm(vec2(x * 2.2 + uSeed, d * 3.5 - t));',
+        '  float n2 = fbm(vec2(x * 5.0 - uSeed, d * 7.0 - t * 1.6));',
+        '  x += (n - 0.5) * 0.9 * d;                     // licks sideways further out',
+        '  float width = mix(0.7, 0.1, pow(d, 0.8)) * (0.8 + 0.4 * n2);',
+        '  float edge = 1.0 - smoothstep(width * 0.35, width, abs(x));',
+        '  float len = 1.0 - smoothstep(0.35, 1.0, d + (n2 - 0.5) * 0.55);',
+        '  float core = 1.0 - smoothstep(width * 0.05, width * 0.45, abs(x));',
+        '  float heat = edge * len * (0.95 - d * 0.55) * (0.7 + n * 0.6);',
+        '  vec3 col = mix(vec3(0.7, 0.06, 0.02), vec3(1.0, 0.38, 0.04), smoothstep(0.05, 0.3, heat));',
+        '  col = mix(col, vec3(1.0, 0.72, 0.2), smoothstep(0.3, 0.6, heat));',
+        '  col = mix(col, vec3(1.0, 0.95, 0.8), smoothstep(0.55, 0.9, heat * core * (1.0 - d)));',
+        '  float a = clamp(heat * 1.8, 0.0, 1.0) * uPower;',
+        '  gl_FragColor = vec4(col * uTint * a * 1.15, a);',
+        '}'].join('\n'),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    (this.flameMats || (this.flameMats = [])).push(m);
+    return m;
+  }
+
+  makeFlame(w, h, seed, tint) {
+    const g = new THREE.PlaneGeometry(w, h);
+    g.translate(0, -h / 2, 0);
+    const m = new THREE.Mesh(g, this.flameMaterial(seed === undefined ? Math.random() * 50 : seed, tint));
+    m.renderOrder = 5;
+    return m;
+  }
+
+  // Soft round puff for smoke and steam
+  smokeTex() {
+    return this.canvasTex('smoke', 128, 128, (c, w, h) => {
+      for (let i = 0; i < 9; i++) {
+        const x = w * (0.3 + Math.random() * 0.4), y = h * (0.3 + Math.random() * 0.4), r = w * (0.18 + Math.random() * 0.14);
+        const g = c.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = g; c.fillRect(0, 0, w, h);
+      }
+    }, { repeat: false });
+  }
+
   glowTex() {
     return this.canvasTex('glow', 128, 128, (c, w, h) => {
       const g = c.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
@@ -8997,6 +9271,8 @@ class World3D {
     this.root = new T.Group();
     this.scene.add(this.root);
     this.merged = new Map();
+    this.flameMats = this.flameMats ? this.flameMats.filter(m => m.__persist) : [];
+    this.collectMeshes = new Map();
 
     const name = W3D_THEMES[themeName] ? themeName : 'nightCity';
     const th = W3D_THEMES[name];
@@ -9171,6 +9447,60 @@ class World3D {
     return [side, side, top, side, front, side];
   }
 
+  // Skyscraper facade for raised ground: a stone grid with lit glass windows
+  towerMaterials() {
+    const key = 'tower_' + this.themeName;
+    if (this.materials[key + '_front']) {
+      const f = this.materials[key + '_front'], sd = this.materials[key + '_side'], tp = this.groundMaterials()[2];
+      return [sd, sd, tp, sd, f, sd];
+    }
+    const warm = this.themeName === 'aiCampus';
+    const frame = warm ? '#e9dcc4' : '#3a3a58', glass = warm ? '#5a3a34' : '#141428';
+    const base = this.canvasTex(key + '_base', 128, 256, (c, w, h) => {
+      c.fillStyle = frame; c.fillRect(0, 0, w, h);
+      this.noise(c, w, h, 300, ['rgba(0,0,0,0.06)', 'rgba(255,255,255,0.06)']);
+      c.fillStyle = warm ? '#c46a4c' : '#55557a'; c.fillRect(0, 0, w, 12);          // floor slab band
+      c.fillStyle = 'rgba(0,0,0,0.2)'; c.fillRect(0, 12, w, 3);
+      for (let r = 0; r < 2; r++) for (let q = 0; q < 2; q++) {
+        const x = 10 + q * 60, y = 26 + r * 116;
+        const g = c.createLinearGradient(x, y, x + 48, y + 100);
+        g.addColorStop(0, glass); g.addColorStop(1, '#000000');
+        c.fillStyle = g; c.fillRect(x, y, 48, 100);
+        c.fillStyle = 'rgba(255,255,255,0.12)';                                       // sky reflection streak
+        c.beginPath(); c.moveTo(x + 6, y + 100); c.lineTo(x + 20, y); c.lineTo(x + 30, y); c.lineTo(x + 16, y + 100); c.fill();
+      }
+    });
+    const lit = this.canvasTex(key + '_lit', 128, 256, (c, w, h) => {
+      c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+      for (let r = 0; r < 2; r++) for (let q = 0; q < 2; q++) {
+        if (Math.random() < 0.45) continue;
+        c.fillStyle = ['#ffcf8a', '#ffe8c0', '#ffb070'][Math.floor(Math.random() * 3)];
+        c.globalAlpha = 0.55 + Math.random() * 0.35;
+        c.fillRect(10 + q * 60, 26 + r * 116, 48, 100);
+      }
+      c.globalAlpha = 1;
+    });
+    const front = this.mat(key + '_front', { map: base, emissive: 0xffffff, emissiveMap: lit, emissiveIntensity: 0.9,
+      roughness: 0.5, metalness: 0.15, envMap: this.envMap, envMapIntensity: 0.4 });
+    const side = this.mat(key + '_side', { map: base, color: 0xb8aca0, roughness: 0.6 });
+    return [side, side, this.groundMaterials()[2], side, front, side];
+  }
+
+  // Cornice along a tower roof, with a row of warm uplights
+  addTowerTrim(x, w, top) {
+    const T = THREE;
+    const cap = this.mat('towerCap_' + this.themeName, { color: this.themeName === 'aiCampus' ? 0xf2e6d0 : 0x6a6a8a, roughness: 0.4, metalness: 0.2 });
+    const m = new T.Mesh(new T.BoxGeometry(w + 10, 8, this.groundDepth() + 10), cap);
+    m.position.set(x + w / 2, -(top + 4), -this.groundDepth() / 2);
+    m.castShadow = m.receiveShadow = true;
+    this.root.add(m);
+    for (let lx = x + 40; lx < x + w - 20; lx += 120) {
+      const gl = this.glow('#ffd8a0', 70, 0.35);
+      gl.position.set(lx, -(top + 26), 6);
+      this.root.add(gl);
+    }
+  }
+
   buildGround(solid, level) {
     // Extend the first/last segment past the level edge so the perspective
     // view never shows the world's end at the sides.
@@ -9178,9 +9508,20 @@ class World3D {
     if (x <= 0) { w += x + 1500; x = -1500; }
     if (solid.x + solid.width >= level.width) w = (level.width + 1500) - x;
     const d = this.groundDepth();
+    const tall = solid.height > 420;
     const geo = this.boxGeo(w, solid.height, d, 96, true);
-    const m = new THREE.Mesh(geo, this.groundMaterials());
+    if (tall) { // towers: repeat the wall texture every 256px down from the top, like building floors
+      const uv = geo.attributes.uv, h = solid.height;
+      for (const f of [0, 1, 4, 5]) for (let i = 0; i < 4; i++) {
+        const k = f * 4 + i;
+        const sideW = f < 2 ? d : w;
+        const u0 = f < 2 ? uv.getX(k) * 96 / d : uv.getX(k) * 96 / w; // undo boxGeo's 96px tiling
+        uv.setXY(k, u0 * sideW / 128, 1 - (1 - uv.getY(k)) * h / 256);
+      }
+    }
+    const m = new THREE.Mesh(geo, tall ? this.towerMaterials() : this.groundMaterials());
     m.position.set(x + w / 2, -(solid.y + solid.height / 2), -d / 2);
+    if (tall) this.addTowerTrim(x, w, solid.y);
     m.receiveShadow = true;
     m.castShadow = true;
     this.root.add(m);
@@ -9407,21 +9748,24 @@ class World3D {
           p.position.set(px, -r, 0.5);
           g.add(p);
         }
-        const flame = new T.Mesh(new T.ConeGeometry(r * 0.8, 24, 16, 1, true), M.flame);
-        flame.rotation.z = Math.PI / 2;
-        const core = new T.Mesh(new T.ConeGeometry(r * 0.45, 14, 12, 1, true), M.core);
-        core.rotation.z = Math.PI / 2;
-        const fg = this.glow('#ff9a30', 70, 0.6);
-        g.add(flame, core, fg);
+        // Engine bell + a real shader flame blasting out the back
+        const bell = new T.Mesh(new T.CylinderGeometry(r * 0.55, r * 0.85, 7, 16, 1, true), M.red);
+        bell.rotation.z = Math.PI / 2;
+        bell.position.set(6, -r, -r);
+        g.add(bell);
+        const flame = this.makeFlame(r * 3.4, 58, x * 0.013 + y * 0.07);
+        flame.rotation.z = -Math.PI / 2;            // aim the plume backwards (-x)
+        flame.position.set(3, -r, -r + 0.5);
+        const fg = this.glow('#ff8a30', 90, 0.55);
+        fg.position.set(-12, -r, -r + 6);
+        g.add(flame, fg);
         const seed = x * 0.05 + y;
         this.tickers.push(t => {
-          const f = 1 + Math.abs(Math.sin(seed + t * 20)) * 0.5;
-          flame.scale.set(1, f, 1); core.scale.set(1, f, 1);
-          flame.position.set(-12 * f + 2, -r, -r);
-          core.position.set(-7 * f + 2, -r, -r);
-          fg.position.set(-10, -r, -r + 6);
+          const f = 0.9 + Math.abs(Math.sin(seed + t * 17)) * 0.25;
+          flame.scale.set(1, f, 1);
+          fg.material.opacity = 0.45 + Math.sin(seed + t * 23) * 0.1;
         });
-        g.traverse(o => { if (o.isMesh && o.material !== M.flame && o.material !== M.core) o.castShadow = o.receiveShadow = true; });
+        g.traverse(o => { if (o.isMesh && o !== flame) o.castShadow = o.receiveShadow = true; });
         break;
       }
       default: // ledge
@@ -9502,17 +9846,18 @@ class World3D {
       c.shadowBlur = 0; c.fillStyle = '#ffffff'; c.globalAlpha = 0.6; c.fillText(sign.text, w / 2, h / 2 + scale);
     }, { repeat: false });
     const z = -70;
-    const top = W3D_GROUND_Y - (sign.h || 150);
+    const base = sign.base || W3D_GROUND_Y;
+    const top = base - (sign.h || 150);
     const g = new T.Group();
     const faceMat = new T.MeshBasicMaterial({ map: tex, toneMapped: false });
     const backMat = new T.MeshStandardMaterial({ color: 0x1a1a30, roughness: 0.6, metalness: 0.5 });
     const panel = new T.Mesh(new T.BoxGeometry(panelW, panelH, 8), [backMat, backMat, backMat, backMat, faceMat, backMat]);
     panel.position.set(sign.x, -(top + panelH / 2), z);
     panel.castShadow = true;
-    const poleLen = W3D_GROUND_Y - top - panelH;
+    const poleLen = base - top - panelH;
     const pole = new T.Mesh(new T.CylinderGeometry(3.5, 4.5, poleLen, 10),
       this.mat('signPole', { color: 0x3a3a58, roughness: 0.5, metalness: 0.7 }));
-    pole.position.set(sign.x, -(W3D_GROUND_Y - poleLen / 2), z - 6);
+    pole.position.set(sign.x, -(base - poleLen / 2), z - 6);
     pole.castShadow = true;
     const halo = this.glow(color, panelW * 1.6, 0.35);
     halo.scale.y = panelH * 3;
@@ -9828,16 +10173,24 @@ class World3D {
         rocket.add(fin);
       }
       rocket.traverse(o => { if (o.isMesh) o.castShadow = true; });
-      const flame = new T.Mesh(new T.ConeGeometry(r * 0.9, r * 6, 16, 1, true), flameMat);
-      flame.rotation.x = Math.PI;
-      const core = new T.Mesh(new T.ConeGeometry(r * 0.5, r * 3.5, 12, 1, true), coreMat);
-      core.rotation.x = Math.PI;
-      const fglow = this.glow('#ff9a40', r * 12, 0.9);
+      const flame = this.makeFlame(r * 3.2, r * 9, this.rng() * 40);
+      flame.material.fog = false;
+      const core = this.makeFlame(r * 1.8, r * 4.5, this.rng() * 40, 0xfff4e0);
+      const fglow = this.glow('#ff9a40', r * 14, 0.9);
       rocket.add(flame, core, fglow);
+      // Exhaust smoke billowing out from the pad
+      const smoke = [];
+      const smokeMat = new T.SpriteMaterial({ map: this.smokeTex(), color: 0xd8c8c0, transparent: true, opacity: 0, depthWrite: false });
+      for (let i = 0; i < 14; i++) {
+        const sp = new T.Sprite(smokeMat.clone());
+        sp.visible = false;
+        this.root.add(sp);
+        smoke.push({ sp, life: i / 14, side: i % 2 ? 1 : -1 });
+      }
       const baseX = x + 56 / 2 + r + 18, baseY = -(W3D_GROUND_Y + 4);
       rocket.position.set(baseX, baseY, z);
       this.root.add(rocket);
-      launchers.push({ rocket, flame, core, fglow, r, baseY, period: 14 + this.rng() * 14, offset: this.rng() * 30,
+      launchers.push({ rocket, flame, core, fglow, smoke, padX: baseX, padZ: z, r, baseY, period: 14 + this.rng() * 14, offset: this.rng() * 30,
         launches: this.rng() < 0.6 });
     }
 
@@ -9856,13 +10209,25 @@ class World3D {
         }
         L.rocket.position.y = L.baseY + alt;
         L.rocket.rotation.z = alt > 0 ? Math.min(0.25, alt / 9000) : 0;
-        const f = burning ? 1 + Math.sin(t * 40 + L.offset) * 0.15 : 0;
+        const f = burning ? 1 + Math.sin(t * 40 + L.offset) * 0.08 : 0;
         L.flame.visible = L.core.visible = L.fglow.visible = burning;
         if (burning) {
-          L.flame.scale.set(f, f * (alt > 0 ? 1.6 : 1), f);
-          L.flame.position.y = -L.r * 3 * L.flame.scale.y;
-          L.core.position.y = -L.r * 1.75 * f;
+          L.flame.scale.set(f, f * (alt > 0 ? 1.5 : 1), 1);
+          L.flame.position.y = 0;
+          L.core.position.y = 0;
           L.fglow.position.y = -L.r * 2;
+        }
+        // Smoke: puffs roll out sideways from the pad and climb as they fade
+        for (const s of L.smoke) {
+          if (!burning) { s.sp.visible = false; continue; }
+          s.life += 0.006 + (alt > 0 ? 0.004 : 0);
+          if (s.life > 1) s.life -= 1;
+          const k = s.life;
+          s.sp.visible = true;
+          const size = L.r * (3 + k * 9);
+          s.sp.scale.set(size, size, 1);
+          s.sp.position.set(L.padX + s.side * k * L.r * 9, L.baseY + L.r * 1.5 + k * k * L.r * 6, L.padZ + 10);
+          s.sp.material.opacity = Math.sin(k * Math.PI) * 0.55;
         }
       }
     });
@@ -10637,6 +11002,9 @@ const AutoPilot = (function () {
     const k0 = keyOf(start);
     Bot.caches.normal.set(k0, { key: k0, x: start.x, feet: start.y + CONFIG.PLAYER_HEIGHT, vx: 0, edges: null });
     Bot.bgQueue = [k0];
+    Bot.bgSeen = new Set([k0]);
+    Bot.regions = null;
+    Bot.pending = null;
     Bot.progress = { score: -1, x: 0, t: 0 };
   }
 
@@ -10723,6 +11091,7 @@ const AutoPilot = (function () {
       powered: player.powered, invincible: player.invincible, ghost: player.invincible || player.damageInvTimer > 0.6 };
     const live = liveSnapshot();
     const here = keyOf(st);
+    updatePending(here);
     const dims = { w: player.width, h: player._getStandingHeight(), powered: player.powered };
     const cache = player.powered ? Bot.caches.powered : Bot.caches.normal;
     const options = [];
@@ -10769,6 +11138,7 @@ const AutoPilot = (function () {
     let best = null;
     for (const { prog, r, k } of options) {
       if (collect && r.goal) continue;
+      if (collect && strands(k, r.gains, r.hits)) continue;
       if (noWait && prog.kind === 'wait') continue;
       const cost = r.frames + r.hurt * hurtCost - r.kills * 40 + (r.stomps - r.kills) * 40;
       const liveKeys = collect ? [...r.liveGains].filter(g => !skipped(g))
@@ -10787,7 +11157,8 @@ const AutoPilot = (function () {
       }
     }
     let expansions = 0, pops = 0;
-    while (heap.a.length && pops < 20000) {
+    const maxPops = budget >= 3000 ? 250000 : 20000; // long trips back need a deep search
+    while (heap.a.length && pops < maxPops) {
       const [d, k] = heap.pop();
       pops++;
       if (d > (dist.get(k) ?? Infinity)) continue;
@@ -10801,6 +11172,7 @@ const AutoPilot = (function () {
       }
       for (const e of node.edges) {
         if (collect && e.goal) continue;
+        if (collect && strands(e.to, e.gains, e.hits)) continue;
         const c = d + e.frames + 4;
         const v = collect ? edgeValue(e) : (e.goal ? 1 : 0);
         if (v > 0 && (!best || c - v * 8 < best.cost)) best = { cost: c - v * 8, prog: prog0, keys: collect ? edgeKeys(e) : [] };
@@ -10829,18 +11201,141 @@ const AutoPilot = (function () {
 
   function backgroundMap() {
     const cache = Bot.caches.normal;
+    const t0 = performance.now();
+    const seen = Bot.bgSeen;
     while (Bot.bgQueue.length) {
       const node = cache.get(Bot.bgQueue.shift());
-      if (!node || node.edges) continue;
-      expand(Bot.Wg, node, NORMAL_DIMS);
+      if (!node) continue;
+      // The route search may already have expanded this node; still walk on
+      // through its edges so the whole level gets mapped.
+      if (!node.edges) expand(Bot.Wg, node, NORMAL_DIMS);
       for (const e of node.edges) {
-        if (!cache.has(e.to)) {
-          cache.set(e.to, { key: e.to, x: e.x, feet: e.feet, vx: e.vx, edges: null });
-          Bot.bgQueue.push(e.to);
+        if (seen.has(e.to)) continue;
+        seen.add(e.to);
+        if (!cache.has(e.to)) cache.set(e.to, { key: e.to, x: e.x, feet: e.feet, vx: e.vx, edges: null });
+        Bot.bgQueue.push(e.to);
+      }
+      if (performance.now() - t0 > 2.5) return; // ~2.5ms of mapping per frame
+    }
+    if (!Bot.regions) mapRegions();
+  }
+
+  // ---- One-way drops ----
+  // Once the whole level is mapped, split the move graph into regions you
+  // can travel around freely (strongly connected components). Dropping into a
+  // dip or off a tower moves you to another region you can't climb back from,
+  // so before taking such a move the bot makes sure nothing it could still
+  // collect would be left behind.
+  function setBit(M, b) { if (b !== undefined) M[b >> 5] |= 1 << (b & 31); }
+  function mapRegions() {
+    const cache = Bot.caches.normal;
+    const bits = new Map();
+    let nb = 0;
+    for (const t of Bot.Wg.targets) bits.set(t.id, nb++);
+    for (const b of Bot.Wg.blocks) bits.set('b' + b.index, nb++);
+    const words = Math.max(1, Math.ceil(nb / 32));
+    // Iterative Tarjan: regions come out successors-first
+    const index = new Map(), low = new Map(), onStack = new Set(), stack = [], sccOf = new Map(), sccs = [];
+    let idx = 0;
+    const visit = (k) => { index.set(k, idx); low.set(k, idx); idx++; stack.push(k); onStack.add(k); };
+    for (const startKey of cache.keys()) {
+      if (index.has(startKey)) continue;
+      visit(startKey);
+      const work = [[startKey, 0]];
+      while (work.length) {
+        const top = work[work.length - 1];
+        const k = top[0];
+        const edges = (cache.get(k).edges) || [];
+        if (top[1] < edges.length) {
+          const to = edges[top[1]++].to;
+          if (!cache.has(to)) continue;
+          if (!index.has(to)) { visit(to); work.push([to, 0]); }
+          else if (onStack.has(to)) low.set(k, Math.min(low.get(k), index.get(to)));
+        } else {
+          work.pop();
+          if (work.length) { const par = work[work.length - 1][0]; low.set(par, Math.min(low.get(par), low.get(k))); }
+          if (low.get(k) === index.get(k)) {
+            const id = sccs.length, members = [];
+            let w;
+            do { w = stack.pop(); onStack.delete(w); sccOf.set(w, id); members.push(w); } while (w !== k);
+            sccs.push(members);
+          }
         }
       }
-      return; // one node per frame
     }
+    const reach = sccs.map(() => new Uint32Array(words));
+    for (let r = 0; r < sccs.length; r++) {
+      const R = reach[r];
+      for (const k of sccs[r]) for (const e of cache.get(k).edges || []) {
+        for (const g of e.gains) setBit(R, bits.get(g));
+        for (const h of e.hits) setBit(R, bits.get('b' + h));
+        const t = sccOf.get(e.to);
+        if (t !== undefined && t !== r) { const RT = reach[t]; for (let w = 0; w < words; w++) R[w] |= RT[w]; }
+      }
+    }
+    Bot.regions = { sccOf, reach, bits, words, count: sccs.length, near: new Map() };
+  }
+
+  // Region of a standing position. Live positions (powered-up player, rides,
+  // stomps) rarely land on the exact mapped spot, so fall back to the nearest
+  // mapped node at the same height.
+  function regionOf(key) {
+    const G = Bot.regions;
+    let r = G.sccOf.get(key);
+    if (r !== undefined) return r;
+    r = G.near.get(key);
+    if (r !== undefined) return r === -1 ? undefined : r;
+    const [cx, feet] = key.split('|').map(Number);
+    r = -1;
+    search: for (let dx = 0; dx <= 3; dx++) for (const sx of dx ? [-dx, dx] : [0]) for (let df = -2; df <= 2; df++) for (const v of [0, 1, -1]) {
+      const q = G.sccOf.get((cx + sx) + '|' + (feet + df) + '|' + v);
+      if (q !== undefined) { r = q; break search; }
+    }
+    G.near.set(key, r);
+    return r === -1 ? undefined : r;
+  }
+
+  // Items still collectable from the bot's current region
+  function updatePending(hereKey) {
+    const G = Bot.regions;
+    Bot.pending = null;
+    if (!G) return;
+    const r = regionOf(hereKey);
+    if (r === undefined) return;
+    const R = G.reach[r], P = new Uint32Array(G.words);
+    const has = b => R[b >> 5] & (1 << (b & 31));
+    for (const t of Bot.Wg.targets) {
+      const b = G.bits.get(t.id);
+      if (has(b) && !t.ref.collected && level.collectibles.includes(t.ref) && !skipped(t.ref)) setBit(P, b);
+    }
+    for (const bl of Bot.Wg.blocks) {
+      const b = G.bits.get('b' + bl.index);
+      if (has(b) && !level.questionBlocks[bl.index].used && !skipped('b' + bl.index)) setBit(P, b);
+    }
+    Bot.pending = P;
+    Bot.hereRegion = r;
+  }
+
+  // Would landing at toKey strand items we could still get (other than ones
+  // picked up on the way there)?
+  function strands(toKey, gains, hits) {
+    const G = Bot.regions, P = Bot.pending;
+    if (!G || !P) return false;
+    const t = regionOf(toKey);
+    if (t === undefined || t === Bot.hereRegion) return false;
+    const RT = G.reach[t];
+    let got = null;
+    for (let w = 0; w < G.words; w++) {
+      const miss = P[w] & ~RT[w];
+      if (!miss) continue;
+      if (!got) {
+        got = new Uint32Array(G.words);
+        for (const g of gains) setBit(got, G.bits.get(g));
+        for (const h of hits) setBit(got, G.bits.get('b' + h));
+      }
+      if (miss & ~got[w]) return true;
+    }
+    return false;
   }
 
   // Called every fixed step before the game update
@@ -11049,7 +11544,7 @@ function startGame(characterType, levelIndex) {
   player = new Player(levelData.playerStart.x, levelData.playerStart.y, characterType);
   camera = new Camera(CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
   camera.levelWidth = level.width;
-  camera.levelHeight = level.height;
+  camera.levelHeight = level.height; camera.levelTop = level.top;
   background = new BackgroundRenderer(levelData.theme || 'nightCity');
   hud = new HUD(level.tickerStocks);
   levelTime = 0;
@@ -11579,7 +12074,7 @@ function updatePlaying(dt) {
     diamondSpawnDelay = 35 + Math.random() * 20;
     // Spawn from right side of screen, bouncing left toward player
     const spawnX = player.x + CONFIG.VIRTUAL_WIDTH + 40;
-    const spawnY = 380;
+    const spawnY = Math.min(380, player.y - 40);
     level.collectibles.push(new RunningDiamond(spawnX, spawnY, -1));
     floatingText.spawn(player.x + CONFIG.VIRTUAL_WIDTH / 2, player.y - 20,
       '\u25C6 DIAMOND!', '#88DDFF', 20, 1.5);
@@ -11887,7 +12382,7 @@ function updateLevelComplete(dt) {
       marginCallShown = false;
       camera = new Camera(CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
       camera.levelWidth = level.width;
-      camera.levelHeight = level.height;
+      camera.levelHeight = level.height; camera.levelTop = level.top;
       background = new BackgroundRenderer(levelData.theme || 'nightCity');
       hud = new HUD(level.tickerStocks);
       levelTime = 0;
@@ -11999,7 +12494,7 @@ function renderMemeSign(ctx, camera, sign, time) {
   const sx = sign.x - camera.x;
   if (sx < -240 || sx > CONFIG.VIRTUAL_WIDTH + 240) return;
 
-  const groundY = 432 - camera.y;
+  const groundY = (sign.base || 432) - camera.y;
   const signY = groundY - (sign.h || 150); // panel top
   const color = sign.color || '#00FF88';
 
