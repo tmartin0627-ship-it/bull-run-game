@@ -198,6 +198,7 @@ class InputHandler {
     // Touch state (set by TouchControls)
     this.touchState = { left: false, right: false, down: false };
     this.touchJustPressed = {};
+    this.bot = null; // virtual controller driven by AutoPilot
 
     window.addEventListener('keydown', (e) => {
       if (!this.keys[e.code]) {
@@ -240,11 +241,11 @@ class InputHandler {
     this.touchJustPressed = {};
   }
 
-  get left() { return this.isHeld('ArrowLeft') || this.isHeld('KeyA') || this.touchState.left; }
-  get right() { return this.isHeld('ArrowRight') || this.isHeld('KeyD') || this.touchState.right; }
-  get down() { return this.isHeld('ArrowDown') || this.isHeld('KeyS') || this.touchState.down; }
-  get jump() { return this.wasPressed('Space') || this.wasPressed('ArrowUp') || this.wasPressed('KeyW'); }
-  get jumpHeld() { return this.isHeld('Space') || this.isHeld('ArrowUp') || this.isHeld('KeyW'); }
+  get left() { return this.isHeld('ArrowLeft') || this.isHeld('KeyA') || this.touchState.left || !!(this.bot && this.bot.left); }
+  get right() { return this.isHeld('ArrowRight') || this.isHeld('KeyD') || this.touchState.right || !!(this.bot && this.bot.right); }
+  get down() { return this.isHeld('ArrowDown') || this.isHeld('KeyS') || this.touchState.down || !!(this.bot && this.bot.down); }
+  get jump() { return this.wasPressed('Space') || this.wasPressed('ArrowUp') || this.wasPressed('KeyW') || !!(this.bot && this.bot.jump); }
+  get jumpHeld() { return this.isHeld('Space') || this.isHeld('ArrowUp') || this.isHeld('KeyW') || !!(this.bot && this.bot.jumpHeld); }
   get enter() { return this.wasPressed('Enter') || this.wasPressed('Space'); }
 }
   </script>
@@ -4157,14 +4158,14 @@ const LEVEL_SPACEX = {
   ],
 
   questionBlocks: [
-    { x: 600, y: 320, contents: 'bull' },
-    { x: 648, y: 320, contents: 'greenCandle' },
-    { x: 1900, y: 320, contents: 'bull' },
-    { x: 2600, y: 320, contents: 'hodlItem' },
-    { x: 3600, y: 320, contents: 'bull' },
-    { x: 5100, y: 320, contents: 'greenCandle' },
-    { x: 6600, y: 320, contents: 'bull' },
-    { x: 8200, y: 320, contents: 'hodlItem' },
+    { x: 600, y: 270, contents: 'bull' },
+    { x: 648, y: 270, contents: 'greenCandle' },
+    { x: 1900, y: 270, contents: 'bull' },
+    { x: 2600, y: 270, contents: 'hodlItem' },
+    { x: 3600, y: 270, contents: 'bull' },
+    { x: 5100, y: 270, contents: 'greenCandle' },
+    { x: 6600, y: 270, contents: 'bull' },
+    { x: 8200, y: 270, contents: 'hodlItem' },
   ],
 
   enemies: [
@@ -4185,7 +4186,7 @@ const LEVEL_SPACEX = {
     // Welcome line on the runway
     { x: 200, y: 400 }, { x: 250, y: 400 }, { x: 300, y: 400 }, { x: 350, y: 400 },
     // Tutorial platforms
-    { x: 540, y: 300 }, { x: 590, y: 300 },
+    { x: 540, y: 300 }, { x: 590, y: 234 },
     { x: 730, y: 250 }, { x: 780, y: 250 },
     // Arc over pit 1
     { x: 1590, y: 310 }, { x: 1640, y: 290 }, { x: 1690, y: 310 },
@@ -4209,7 +4210,7 @@ const LEVEL_SPACEX = {
     // Arc over pit 4
     { x: 6040, y: 310 }, { x: 6090, y: 290 }, { x: 6140, y: 310 },
     // Section 5
-    { x: 6540, y: 290 }, { x: 6590, y: 290 },
+    { x: 6540, y: 290 }, { x: 6590, y: 234 },
     { x: 6840, y: 240 },
     // Victory run
     { x: 7500, y: 400 }, { x: 7550, y: 400 }, { x: 7600, y: 400 },
@@ -4391,33 +4392,33 @@ const LEVEL_1 = {
   // Best for walkability: y=280 → bottom=328, gap to head=50px ✓✓✓
   questionBlocks: [
     // Tutorial — floating above the ground path
-    { x: 300, y: 280, contents: 'bull' },
-    { x: 356, y: 280, contents: 'bull' },
-    { x: 412, y: 280, contents: 'bull' },
+    { x: 300, y: 270, contents: 'bull' },
+    { x: 356, y: 270, contents: 'bull' },
+    { x: 412, y: 270, contents: 'bull' },
 
     // Above elevated platform area
-    { x: 620, y: 210, contents: 'greenCandle' },  // One green candle early on
+    { x: 620, y: 218, contents: 'greenCandle' },  // One green candle early on
 
     // Section 2 — lowered to y=280 so they're reachable with a normal ground
     // jump (max jump height ~93px; at y=240 the block bottom sat right at the
     // jump apex, making it effectively impossible to hit from below)
-    { x: 1900, y: 280, contents: 'bull' },
-    { x: 1956, y: 280, contents: 'bull' },
-    { x: 2150, y: 220, contents: 'bull' },
+    { x: 1900, y: 270, contents: 'bull' },
+    { x: 1956, y: 270, contents: 'bull' },
+    { x: 2150, y: 215, contents: 'bull' },
 
     // Challenge area
-    { x: 4050, y: 240, contents: 'bull' },
-    { x: 4106, y: 240, contents: 'bull' },
-    { x: 4162, y: 240, contents: 'hodlItem' },  // One HODL headband mid-level
+    { x: 4050, y: 270, contents: 'bull' },
+    { x: 4106, y: 270, contents: 'bull' },
+    { x: 4162, y: 270, contents: 'hodlItem' },  // One HODL headband mid-level
 
     // Peak difficulty reward
-    { x: 7000, y: 220, contents: 'bull' },
+    { x: 7000, y: 215, contents: 'bull' },
 
     // Victory run
-    { x: 8050, y: 250, contents: 'bull' },
-    { x: 8106, y: 250, contents: 'bull' },
-    { x: 8550, y: 240, contents: 'bull' },
-    { x: 9150, y: 220, contents: 'bull' },
+    { x: 8050, y: 270, contents: 'bull' },
+    { x: 8106, y: 270, contents: 'bull' },
+    { x: 8550, y: 270, contents: 'bull' },
+    { x: 9150, y: 215, contents: 'bull' },
   ],
 
   // Enemies on ground: y should be groundY - enemyHeight
@@ -4502,7 +4503,7 @@ const LEVEL_1 = {
     { x: 150, y: 400 }, { x: 185, y: 400 }, { x: 220, y: 400 }, { x: 255, y: 400 },
 
     // On first desk platform
-    { x: 370, y: 308 }, { x: 405, y: 308 }, { x: 440, y: 308 },
+    { x: 370, y: 234 }, { x: 405, y: 234 }, { x: 440, y: 234 },
 
     // Arc in air (jumping reward)
     { x: 520, y: 340 }, { x: 560, y: 320 }, { x: 600, y: 300 },
@@ -4549,14 +4550,14 @@ const LEVEL_1 = {
     // Peak difficulty rewards
     { x: 6700, y: 400 }, { x: 6735, y: 400 },
     { x: 6770, y: 308 },
-    { x: 6970, y: 248 }, { x: 7010, y: 248 },
+    { x: 6970, y: 248 }, { x: 7010, y: 179 },
     { x: 7170, y: 188 }, { x: 7210, y: 188 }, { x: 7250, y: 188 },
 
     // Victory run — generous bulls
     { x: 7750, y: 400 }, { x: 7785, y: 400 }, { x: 7820, y: 400 }, { x: 7855, y: 400 },
     { x: 7920, y: 318 }, { x: 7960, y: 318 }, { x: 8000, y: 318 },
     { x: 8220, y: 268 }, { x: 8260, y: 268 }, { x: 8300, y: 268 },
-    { x: 8520, y: 308 }, { x: 8560, y: 308 },
+    { x: 8520, y: 308 }, { x: 8560, y: 234 },
     { x: 8820, y: 248 }, { x: 8860, y: 248 },
     { x: 9120, y: 288 }, { x: 9160, y: 288 },
 
@@ -4647,7 +4648,7 @@ const LEVEL_2 = {
     { x: 424, y: 340, w: 144, h: 16, type: 'desk' },
     { x: 550, y: 290, w: 120, h: 16, type: 'terminal' },
     { x: 800, y: 250, w: 96, h: 16, type: 'column' },
-    { x: 1050, y: 320, w: 144, h: 16, type: 'desk' },
+    { x: 1050, y: 300, w: 144, h: 16, type: 'desk' },  // high enough to stomp the grizzly under it
 
     // == OVER PIT 1 ==
     { x: 1240, y: 380, w: 96, h: 16, type: 'terminal' },
@@ -4747,33 +4748,33 @@ const LEVEL_2 = {
   // 15 question blocks — mostly bulls, rare power-ups
   questionBlocks: [
     // Entrance area
-    { x: 320, y: 240, contents: 'bull' },
-    { x: 376, y: 240, contents: 'bull' },
+    { x: 320, y: 270, contents: 'bull' },
+    { x: 376, y: 270, contents: 'bull' },
 
     // Section 2
-    { x: 1540, y: 240, contents: 'bull' },
-    { x: 1596, y: 240, contents: 'greenCandle' },  // One green candle
+    { x: 1540, y: 270, contents: 'bull' },
+    { x: 1596, y: 270, contents: 'greenCandle' },  // One green candle
 
     // Section 3
-    { x: 2640, y: 240, contents: 'bull' },
-    { x: 2840, y: 220, contents: 'bull' },
+    { x: 2640, y: 270, contents: 'bull' },
+    { x: 2840, y: 215, contents: 'bull' },
 
     // Section 4 — The Pit
-    { x: 3940, y: 220, contents: 'bull' },
-    { x: 3996, y: 220, contents: 'bull' },
-    { x: 4120, y: 180, contents: 'hodlItem' },  // One HODL headband
+    { x: 3940, y: 215, contents: 'bull' },
+    { x: 3996, y: 215, contents: 'bull' },
+    { x: 4120, y: 215, contents: 'hodlItem' },  // One HODL headband
 
     // Section 6
-    { x: 5900, y: 220, contents: 'bull' },
-    { x: 5956, y: 220, contents: 'bull' },
+    { x: 5900, y: 215, contents: 'bull' },
+    { x: 5956, y: 215, contents: 'bull' },
 
     // Section 7
-    { x: 6990, y: 170, contents: 'bull' },
-    { x: 7470, y: 180, contents: 'bull' },
+    { x: 6990, y: 215, contents: 'bull' },
+    { x: 7470, y: 215, contents: 'bull' },
 
     // Executive row
-    { x: 9170, y: 170, contents: 'bull' },
-    { x: 9970, y: 200, contents: 'bull' },
+    { x: 9170, y: 215, contents: 'bull' },
+    { x: 9970, y: 208, contents: 'bull' },
   ],
 
   // ~20 enemies — more grizzlies than Level 1
@@ -4852,8 +4853,8 @@ const LEVEL_2 = {
     { x: 2000, y: 200 },    // High above section 2
     { x: 4310, y: 160 },    // Very high in The Pit
     { x: 6080, y: 200 },    // Above column in recovery zone
-    { x: 7470, y: 210 },    // High-frequency zone reward
-    { x: 9980, y: 220 },    // Executive row reward
+    { x: 7470, y: 141 },    // High-frequency zone reward
+    { x: 9980, y: 134 },    // Executive row reward
   ],
 
   // 90+ bull collectibles
@@ -4862,7 +4863,7 @@ const LEVEL_2 = {
     { x: 150, y: 400 }, { x: 185, y: 400 }, { x: 220, y: 400 }, { x: 255, y: 400 },
 
     // On first desk
-    { x: 320, y: 308 }, { x: 355, y: 308 }, { x: 390, y: 308 },
+    { x: 320, y: 234 }, { x: 355, y: 234 }, { x: 390, y: 234 },
 
     // Arc to terminal
     { x: 460, y: 340 }, { x: 500, y: 310 }, { x: 540, y: 290 }, { x: 580, y: 310 },
@@ -4877,7 +4878,7 @@ const LEVEL_2 = {
     { x: 1420, y: 400 }, { x: 1455, y: 400 }, { x: 1490, y: 400 },
 
     // Section 2 platforms
-    { x: 1520, y: 308 }, { x: 1555, y: 308 },
+    { x: 1520, y: 234 }, { x: 1555, y: 234 },
     { x: 1740, y: 248 }, { x: 1780, y: 248 },
     { x: 1970, y: 208 },
 
@@ -4886,8 +4887,8 @@ const LEVEL_2 = {
 
     // Section 3
     { x: 2530, y: 400 }, { x: 2565, y: 400 },
-    { x: 2620, y: 308 }, { x: 2660, y: 308 },
-    { x: 2820, y: 248 }, { x: 2860, y: 248 },
+    { x: 2620, y: 234 }, { x: 2660, y: 234 },
+    { x: 2820, y: 179 }, { x: 2860, y: 179 },
     { x: 3000, y: 198 }, { x: 3040, y: 198 },
 
     // Before pit 3
@@ -4896,8 +4897,8 @@ const LEVEL_2 = {
     // Section 4 — The Pit
     { x: 3640, y: 400 }, { x: 3675, y: 400 },
     { x: 3720, y: 318 }, { x: 3760, y: 318 },
-    { x: 3940, y: 258 }, { x: 3980, y: 258 },
-    { x: 4120, y: 208 }, { x: 4160, y: 208 },
+    { x: 3940, y: 179 }, { x: 3980, y: 179 },
+    { x: 4120, y: 179 }, { x: 4160, y: 179 },
     { x: 4300, y: 168 }, { x: 4340, y: 168 },
     { x: 4470, y: 228 }, { x: 4510, y: 228 },
 
@@ -4914,7 +4915,7 @@ const LEVEL_2 = {
     // Section 6
     { x: 5580, y: 400 }, { x: 5615, y: 400 },
     { x: 5670, y: 318 }, { x: 5710, y: 318 },
-    { x: 5900, y: 258 }, { x: 5940, y: 258 },
+    { x: 5900, y: 179 }, { x: 5940, y: 179 },
     { x: 6070, y: 208 }, { x: 6110, y: 208 },
 
     // Before pit 6
@@ -4924,10 +4925,10 @@ const LEVEL_2 = {
     { x: 6590, y: 400 }, { x: 6625, y: 400 },
     { x: 6670, y: 308 }, { x: 6710, y: 308 },
     { x: 6850, y: 248 },
-    { x: 6990, y: 198 }, { x: 7030, y: 198 },
+    { x: 6990, y: 179 }, { x: 7030, y: 179 },
     { x: 7150, y: 248 },
     { x: 7300, y: 308 }, { x: 7340, y: 308 },
-    { x: 7470, y: 218 },
+    { x: 7470, y: 179 },
     { x: 7600, y: 278 }, { x: 7640, y: 278 },
 
     // Over pit 7
@@ -4940,10 +4941,10 @@ const LEVEL_2 = {
     { x: 8530, y: 400 }, { x: 8565, y: 400 }, { x: 8600, y: 400 },
     { x: 8620, y: 308 }, { x: 8660, y: 308 }, { x: 8700, y: 308 },
     { x: 8920, y: 248 }, { x: 8960, y: 248 },
-    { x: 9170, y: 198 }, { x: 9210, y: 198 },
+    { x: 9170, y: 179 }, { x: 9210, y: 179 },
     { x: 9420, y: 258 }, { x: 9460, y: 258 },
     { x: 9720, y: 308 }, { x: 9760, y: 308 },
-    { x: 9970, y: 228 },
+    { x: 9970, y: 172 },
 
     // Over pit 9
     { x: 10270, y: 328 }, { x: 10380, y: 278 },
@@ -5159,7 +5160,6 @@ const LEVEL_3 = {
     { x: 10600, y: 250, w: 72, h: 16, type: 'ledge' },
 
     // == OVER PIT 10 ==
-    { x: 10850, y: 370, w: 72, h: 16, type: 'crystal' },
     { x: 10950, y: 320, w: 72, h: 16, type: 'ledge' },
 
     // == SECTION 11: PRE-BOSS GAUNTLET (11040-12600) ==
@@ -5181,40 +5181,40 @@ const LEVEL_3 = {
   // 18 question blocks — mostly bulls, rare power-ups
   questionBlocks: [
     // Mine entrance
-    { x: 300, y: 240, contents: 'bull' },
-    { x: 356, y: 240, contents: 'bull' },
+    { x: 300, y: 270, contents: 'bull' },
+    { x: 356, y: 270, contents: 'bull' },
 
     // Tunnels
-    { x: 1400, y: 240, contents: 'bull' },
-    { x: 1580, y: 220, contents: 'bull' },
+    { x: 1400, y: 270, contents: 'bull' },
+    { x: 1580, y: 215, contents: 'bull' },
 
     // Server farms
-    { x: 2560, y: 220, contents: 'bull' },
-    { x: 2700, y: 170, contents: 'greenCandle' },  // One green candle
+    { x: 2560, y: 215, contents: 'bull' },
+    { x: 2620, y: 108, contents: 'greenCandle' },  // One green candle (above the crystal, clear of the elevator)
 
     // Crystal cavern
-    { x: 3580, y: 220, contents: 'bull' },
-    { x: 3740, y: 180, contents: 'bull' },
-    { x: 3900, y: 150, contents: 'bull' },
+    { x: 3580, y: 208, contents: 'bull' },
+    { x: 3740, y: 215, contents: 'bull' },
+    { x: 3900, y: 215, contents: 'bull' },
 
     // Hash mines
-    { x: 5270, y: 220, contents: 'bull' },
-    { x: 5420, y: 180, contents: 'hodlItem' },  // One HODL headband
+    { x: 5270, y: 215, contents: 'bull' },
+    { x: 5420, y: 215, contents: 'hodlItem' },  // One HODL headband
 
     // Neon corridor
-    { x: 6280, y: 220, contents: 'bull' },
-    { x: 6420, y: 180, contents: 'bull' },
+    { x: 6280, y: 215, contents: 'bull' },
+    { x: 6420, y: 208, contents: 'bull' },
 
     // Blockchain bridge
-    { x: 8120, y: 220, contents: 'bull' },
-    { x: 8320, y: 180, contents: 'bull' },
+    { x: 8120, y: 215, contents: 'bull' },
+    { x: 8320, y: 215, contents: 'bull' },
 
     // Deep mines
-    { x: 9370, y: 220, contents: 'bull' },
-    { x: 9570, y: 180, contents: 'bull' },
+    { x: 9370, y: 215, contents: 'bull' },
+    { x: 9570, y: 215, contents: 'bull' },
 
     // Pre-boss gauntlet
-    { x: 11520, y: 180, contents: 'greenCandle' },  // One more green candle before boss
+    { x: 11520, y: 215, contents: 'greenCandle' },  // One more green candle before boss
   ],
 
   // ~25 enemies — lots of grizzlies
@@ -5303,11 +5303,11 @@ const LEVEL_3 = {
   dividendCoins: [
     { x: 720, y: 210 },     // Mine entrance high area
     { x: 1740, y: 190 },    // Above ledge in tunnels
-    { x: 2700, y: 180 },    // Above ledge in server farms
-    { x: 3900, y: 160 },    // Above high ledge in crystal cavern
-    { x: 5420, y: 190 },    // Hash mines high
-    { x: 6420, y: 190 },    // Neon corridor high
-    { x: 8320, y: 190 },    // Blockchain bridge high
+    { x: 2700, y: 141 },    // Above ledge in server farms
+    { x: 3900, y: 141 },    // Above high ledge in crystal cavern
+    { x: 5420, y: 141 },    // Hash mines high
+    { x: 6420, y: 134 },    // Neon corridor high
+    { x: 8320, y: 141 },    // Blockchain bridge high
     { x: 10220, y: 220 },   // Deep mines
   ],
 
@@ -5317,7 +5317,7 @@ const LEVEL_3 = {
     { x: 150, y: 400 }, { x: 185, y: 400 }, { x: 220, y: 400 },
 
     // On server platform
-    { x: 300, y: 308 }, { x: 340, y: 308 },
+    { x: 300, y: 234 }, { x: 340, y: 234 },
 
     // Crystal arc
     { x: 420, y: 330 }, { x: 460, y: 300 }, { x: 500, y: 280 }, { x: 540, y: 300 },
@@ -5331,8 +5331,8 @@ const LEVEL_3 = {
 
     // Section 2 ground
     { x: 1300, y: 400 }, { x: 1335, y: 400 },
-    { x: 1400, y: 308 }, { x: 1440, y: 308 },
-    { x: 1580, y: 248 }, { x: 1620, y: 248 },
+    { x: 1400, y: 234 }, { x: 1440, y: 234 },
+    { x: 1580, y: 179 }, { x: 1620, y: 179 },
     { x: 1740, y: 198 },
 
     // Over pit 2
@@ -5341,8 +5341,8 @@ const LEVEL_3 = {
     // Section 3
     { x: 2310, y: 400 }, { x: 2345, y: 400 },
     { x: 2400, y: 308 }, { x: 2440, y: 308 },
-    { x: 2560, y: 238 }, { x: 2600, y: 238 },
-    { x: 2700, y: 188 }, { x: 2740, y: 188 },
+    { x: 2560, y: 179 }, { x: 2600, y: 179 },
+    { x: 2700, y: 179 }, { x: 2740, y: 179 },
 
     // Over pit 3
     { x: 3060, y: 338 }, { x: 3150, y: 288 },
@@ -5350,9 +5350,9 @@ const LEVEL_3 = {
     // Section 4 — Crystal cavern
     { x: 3300, y: 400 }, { x: 3335, y: 400 },
     { x: 3400, y: 308 }, { x: 3440, y: 308 },
-    { x: 3580, y: 248 }, { x: 3620, y: 248 },
-    { x: 3740, y: 198 }, { x: 3780, y: 198 },
-    { x: 3900, y: 168 }, { x: 3940, y: 168 },
+    { x: 3580, y: 172 }, { x: 3620, y: 172 },
+    { x: 3740, y: 179 }, { x: 3780, y: 179 },
+    { x: 3900, y: 179 }, { x: 3940, y: 179 },
     { x: 4070, y: 228 }, { x: 4110, y: 228 },
 
     // Over pit 4
@@ -5368,8 +5368,8 @@ const LEVEL_3 = {
     // Section 6 — Hash mines
     { x: 5000, y: 400 }, { x: 5035, y: 400 },
     { x: 5100, y: 308 }, { x: 5140, y: 308 },
-    { x: 5270, y: 248 }, { x: 5310, y: 248 },
-    { x: 5420, y: 198 }, { x: 5460, y: 198 },
+    { x: 5270, y: 179 }, { x: 5310, y: 179 },
+    { x: 5420, y: 179 }, { x: 5460, y: 179 },
     { x: 5590, y: 268 }, { x: 5630, y: 268 },
 
     // Over pit 6
@@ -5378,8 +5378,8 @@ const LEVEL_3 = {
     // Section 7 — Neon corridor
     { x: 6030, y: 400 }, { x: 6065, y: 400 },
     { x: 6120, y: 308 }, { x: 6160, y: 308 },
-    { x: 6280, y: 248 }, { x: 6320, y: 248 },
-    { x: 6420, y: 198 }, { x: 6460, y: 198 },
+    { x: 6280, y: 179 }, { x: 6320, y: 179 },
+    { x: 6420, y: 172 }, { x: 6460, y: 172 },
     { x: 6560, y: 248 },
     { x: 6720, y: 308 },
     { x: 6870, y: 228 }, { x: 6910, y: 228 },
@@ -5397,8 +5397,8 @@ const LEVEL_3 = {
     // Section 9 — Blockchain
     { x: 7820, y: 400 }, { x: 7855, y: 400 },
     { x: 7920, y: 308 }, { x: 7960, y: 308 },
-    { x: 8120, y: 248 }, { x: 8160, y: 248 },
-    { x: 8320, y: 198 }, { x: 8360, y: 198 },
+    { x: 8120, y: 179 }, { x: 8160, y: 179 },
+    { x: 8320, y: 179 }, { x: 8360, y: 179 },
     { x: 8520, y: 258 }, { x: 8560, y: 258 },
     { x: 8700, y: 308 },
 
@@ -5408,8 +5408,8 @@ const LEVEL_3 = {
     // Section 10 — Deep mines
     { x: 9010, y: 400 }, { x: 9045, y: 400 }, { x: 9080, y: 400 },
     { x: 9120, y: 308 }, { x: 9160, y: 308 },
-    { x: 9370, y: 248 }, { x: 9410, y: 248 },
-    { x: 9570, y: 198 }, { x: 9610, y: 198 },
+    { x: 9370, y: 179 }, { x: 9410, y: 179 },
+    { x: 9570, y: 179 }, { x: 9610, y: 179 },
     { x: 9770, y: 248 }, { x: 9810, y: 248 },
     { x: 9970, y: 308 }, { x: 10010, y: 308 },
     { x: 10220, y: 228 }, { x: 10260, y: 228 },
@@ -5417,13 +5417,13 @@ const LEVEL_3 = {
     { x: 10620, y: 218 }, { x: 10660, y: 218 },
 
     // Over pit 10
-    { x: 10870, y: 338 }, { x: 10970, y: 288 },
+    { x: 10880, y: 340 }, { x: 10970, y: 288 },
 
     // Section 11 — Pre-boss gauntlet
     { x: 11100, y: 400 }, { x: 11135, y: 400 },
     { x: 11200, y: 308 }, { x: 11240, y: 308 },
     { x: 11370, y: 248 }, { x: 11410, y: 248 },
-    { x: 11520, y: 198 }, { x: 11560, y: 198 },
+    { x: 11520, y: 179 }, { x: 11560, y: 179 },
     { x: 11670, y: 248 },
     { x: 11820, y: 308 }, { x: 11860, y: 308 },
     { x: 12020, y: 228 }, { x: 12060, y: 228 },
@@ -5439,9 +5439,9 @@ const LEVEL_3 = {
   movingPlatforms: [
     { x: 2700, y: 350, w: 96, h: 16, type: 'crystal', speed: 50, waypoints: [{ x: 2700, y: 350 }, { x: 2700, y: 200 }] },
     { x: 4800, y: 360, w: 96, h: 16, type: 'server', speed: 60, waypoints: [{ x: 4720, y: 360 }, { x: 4900, y: 260 }] },
-    { x: 6600, y: 300, w: 96, h: 16, type: 'crystal', speed: 70, waypoints: [{ x: 6500, y: 300 }, { x: 6700, y: 300 }] },
+    { x: 6600, y: 300, w: 96, h: 16, type: 'crystal', speed: 70, waypoints: [{ x: 6500, y: 300 }, { x: 6600, y: 300 }] },
     { x: 7650, y: 370, w: 96, h: 16, type: 'server', speed: 55, waypoints: [{ x: 7560, y: 370 }, { x: 7710, y: 250 }] },
-    { x: 10100, y: 300, w: 96, h: 16, type: 'crystal', speed: 65, waypoints: [{ x: 10000, y: 300 }, { x: 10200, y: 300 }] },
+    { x: 10100, y: 300, w: 96, h: 16, type: 'crystal', speed: 65, waypoints: [{ x: 10090, y: 300 }, { x: 10200, y: 300 }] },
     { x: 10900, y: 380, w: 120, h: 16, type: 'server', speed: 50, waypoints: [{ x: 10850, y: 380 }, { x: 10850, y: 240 }] },
   ],
 
@@ -6416,7 +6416,10 @@ class LevelCompleteScreen {
     }
     if (this.animTime > showDelay + 0.3) {
       ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
-      ctx.fillText('Bulls Collected: ' + this.bullsCollected, w / 2, h * 0.61);
+      ctx.fillText(this.itemsTotal
+        ? 'Bulls & Coins: ' + this.itemsCollected + ' / ' + this.itemsTotal +
+          (this.perfect ? '   \u2605 PERFECT PORTFOLIO +$' + PERFECT_BONUS.toLocaleString() : '')
+        : 'Bulls Collected: ' + this.bullsCollected, w / 2, h * 0.61);
     }
     if (this.animTime > showDelay + 0.6) {
       ctx.fillStyle = CONFIG.COLORS.WHITE;
@@ -7386,14 +7389,22 @@ class AudioManager {
     this._playTone(520, 0.1, 'square', 0.08, 0.04);
   }
 
-  playCollect() {
-    this._playTone(880, 0.06, 'sine', 0.12);
-    this._playTone(1320, 0.1, 'sine', 0.08, 0.05);
+  // streak climbs a major scale so quick pickups play a rising run
+  playCollect(streak) {
+    const steps = [0, 2, 4, 5, 7, 9, 11, 12];
+    const n = Math.max(0, (streak || 1) - 1);
+    const semis = steps[n % 8] + 12 * Math.min(1, Math.floor(n / 8));
+    const k = Math.pow(2, semis / 12);
+    this._playTone(880 * k, 0.06, 'sine', 0.12);
+    this._playTone(1320 * k, 0.1, 'sine', 0.08, 0.05);
   }
 
-  playStomp() {
-    this._playTone(180, 0.12, 'sawtooth', 0.15);
-    this._playTone(90, 0.15, 'square', 0.08, 0.05);
+  // combo raises the pitch of each extra mid-air stomp
+  playStomp(combo) {
+    const k = Math.pow(2, Math.min(combo || 0, 6) * 2 / 12);
+    this._playTone(180 * k, 0.12, 'sawtooth', 0.15);
+    this._playTone(90 * k, 0.15, 'square', 0.08, 0.05);
+    if (combo > 0) this._playTone(660 * k, 0.12, 'triangle', 0.08, 0.06);
   }
 
   playDamage() {
@@ -9751,6 +9762,691 @@ class World3D {
   </script>
   <script>
 // ==========================================
+//  AUTOPILOT — computer player + level reachability checker
+// ==========================================
+// Plans with the real Player physics: from places the player can stand it
+// simulates a fixed set of input "programs" (jumps of different heights and
+// air control, super jumps, walking, stopping, waiting) in a sandbox copy of
+// the level and records where each lands and what it collects or bumps.
+// That forms a graph of moves:
+//  - AutoPilot.analyze(level) explores the whole graph from the start and
+//    reports any bull / coin / question block that can't be reached.
+//  - The in-game bot (press B, or open the page with ?autoplay) searches the
+//    graph for the nearest thing worth collecting, and checks every move
+//    against a live simulation (moving platforms, enemies, falling candles)
+//    before committing to it.
+const AutoPilot = (function () {
+  'use strict';
+  const DT = 1 / 60;
+  const BX = 16;           // x bucket for graph nodes
+  const SUPER_CROUCH = 17; // frames of crouch before a super jump (> 0.25s)
+  const PIT_Y = CONFIG.VIRTUAL_HEIGHT + 50;
+
+  // ---- input programs ----
+  const PROGRAMS = (() => {
+    const P = [];
+    for (const H of [2, 10, 40]) for (const A of [-1, 0, 1]) {
+      P.push({ kind: 'jump', H, A, mode: 'all' });
+      if (A !== 0) for (const mode of ['early', 'late', 'reverse']) P.push({ kind: 'jump', H, A, mode });
+    }
+    for (const A of [-1, 0, 1]) P.push({ kind: 'super', A });
+    P.push({ kind: 'walk', A: -1 }, { kind: 'walk', A: 1 }, { kind: 'stop' }, { kind: 'wait' });
+    P.forEach((p, i) => { p.id = i; });
+    return P;
+  })();
+
+  function programInput(prog, f, out) {
+    out.left = out.right = out.down = out.jump = out.jumpHeld = false;
+    let d = 0;
+    if (prog.kind === 'jump') {
+      out.jump = f === 0;
+      out.jumpHeld = f < prog.H;
+      d = prog.A;
+      if (prog.mode === 'early' && f >= 14) d = 0;
+      else if (prog.mode === 'late' && f < 14) d = 0;
+      else if (prog.mode === 'reverse' && f >= 18) d = -prog.A;
+    } else if (prog.kind === 'super') {
+      out.down = f < SUPER_CROUCH;
+      out.jump = f === SUPER_CROUCH;
+      out.jumpHeld = f >= SUPER_CROUCH;
+      d = f >= SUPER_CROUCH ? prog.A : 0;
+    } else if (prog.kind === 'walk') {
+      d = prog.A;
+    }
+    if (d < 0) out.left = true; else if (d > 0) out.right = true;
+    return out;
+  }
+
+  // Moving platforms as static copies (the player can wait for them)
+  function moverCopies(level) {
+    const out = [];
+    for (const mp of level.movingPlatforms || []) {
+      const [p0, p1] = mp.waypoints;
+      // vertical lifts: only the two ends, or the copies would stack on each other
+      for (const t of p0.y === p1.y ? [0, 0.5, 1] : [0, 1]) {
+        out.push({ x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t,
+          width: mp.width, height: mp.height, semiSolid: !!mp.semiSolid });
+      }
+    }
+    return out;
+  }
+
+  // ---- sandbox world built from a loaded level ----
+  function buildWorld(level, opts) {
+    opts = opts || {};
+    const solids = [];
+    for (const s of level.solids) {
+      if (s instanceof MovingPlatform) continue; // time-dependent
+      const o = { x: s.x, y: s.y, width: s.width, height: s.height, semiSolid: !!s.semiSolid };
+      if (s instanceof QuestionBlock) {
+        o.blockIndex = level.questionBlocks.indexOf(s);
+        o.onHitFromBelow = function () { if (W.hitLog) W.hitLog.push(this.blockIndex); };
+      }
+      solids.push(o);
+    }
+    if (opts.extraSolids) solids.push(...opts.extraSolids);
+    const targets = [];
+    level.collectibles.forEach((c, i) => {
+      if (c.type === 'bull' || c.type === 'dividend') {
+        targets.push({ id: 't' + i, ref: c, kind: c.type, x: c.x, y: c.y, width: c.width, height: c.height });
+      }
+    });
+    const W = {
+      level, solids, targets,
+      targetById: new Map(targets.map(t => [t.id, t])),
+      pads: level.shortSqueezePads.map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height })),
+      blocks: level.questionBlocks.map((b, i) => ({ index: i, ref: b, x: b.x, y: b.y, width: b.width, height: b.height })),
+      hitLog: null,
+      width: level.width,
+      goal: level.goalPosition,
+    };
+    const COL = 256;
+    const cols = new Map();
+    const addTo = (kind, o) => {
+      for (let c = Math.floor((o.x - 8) / COL); c <= Math.floor((o.x + o.width + 8) / COL); c++) {
+        if (!cols.has(c)) cols.set(c, { solids: [], targets: [], pads: [] });
+        cols.get(c)[kind].push(o);
+      }
+    };
+    solids.forEach(o => addTo('solids', o));
+    targets.forEach(o => addTo('targets', o));
+    W.pads.forEach(o => addTo('pads', o));
+    const localCache = new Map();
+    W.local = (x0, x1) => {
+      const c0 = Math.floor(x0 / COL), c1 = Math.floor(x1 / COL);
+      const key = c0 + ':' + c1;
+      let r = localCache.get(key);
+      if (r) return r;
+      const out = { solids: new Set(), targets: new Set(), pads: new Set() };
+      for (let c = c0; c <= c1; c++) {
+        const e = cols.get(c);
+        if (!e) continue;
+        e.solids.forEach(o => out.solids.add(o));
+        e.targets.forEach(o => out.targets.add(o));
+        e.pads.forEach(o => out.pads.add(o));
+      }
+      r = { solids: [...out.solids], targets: [...out.targets], pads: [...out.pads] };
+      localCache.set(key, r);
+      return r;
+    };
+    return W;
+  }
+
+  // ---- simulation ----
+  let template = null;
+  function makePlayer(st) {
+    if (!template) template = new Player(0, 0, 'chad');
+    const p = Object.assign(Object.create(Player.prototype), template);
+    p.x = st.x; p.y = st.y; p.vx = st.vx || 0; p.vy = 0;
+    p.width = st.width || CONFIG.PLAYER_WIDTH; p.height = st.height || CONFIG.PLAYER_HEIGHT;
+    p.onGround = true; p.crouching = false; p.crouchTimer = 0; p.superJumpReady = false;
+    p.coyoteTimer = CONFIG.PLAYER_COYOTE_TIME; p.jumpBufferTimer = 0; p.jumpCutAvailable = false;
+    p.facingRight = (st.vx || 0) >= 0;
+    p.invincible = !!st.invincible; p.powered = !!st.powered; p.damageInvTimer = 0;
+    p.diamondHands = !!st.invincible;
+    p._getStandingHeight = () => st.height || CONFIG.PLAYER_HEIGHT;
+    p._getCrouchHeight = () => st.powered ? CONFIG.PLAYER_POWERED_CROUCH_HEIGHT : CONFIG.PLAYER_CROUCH_HEIGHT;
+    return p;
+  }
+
+  // Copy of MovingPlatform.update for the sandbox
+  function stepMover(m, dt) {
+    const t = m.waypoints[m.wp];
+    const dx = t.x - m.x, dy = t.y - m.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 2) { m.x = t.x; m.y = t.y; m.wp = (m.wp + 1) % m.waypoints.length; }
+    else { m.x += dx / dist * m.speed * dt; m.y += dy / dist * m.speed * dt; }
+  }
+
+  const scratchInput = {};
+  // Runs one program from a standing state. Returns null if the player dies.
+  // live (optional): { movers, items, enemies } snapshots for the bot's checks.
+  function simulate(W, st, prog, live) {
+    const loc = W.local(st.x - 900, st.x + 900);
+    const p = makePlayer(st);
+    const gains = new Set();
+    const hits = new Set();
+    const liveGains = live ? new Set() : null;
+    let hurt = 0, stomps = 0, kills = 0, goal = false;
+    const movers = live ? live.movers.map(m => Object.assign({}, m)) : null;
+    const enemies = live ? live.enemies.map(e => Object.assign({}, e)) : null;
+    if (live) live = Object.assign({}, live, { shockwaves: live.shockwaves.map(w => Object.assign({}, w)) });
+    const solids = movers ? loc.solids.concat(movers) : loc.solids;
+    W.hitLog = [];
+    const x0 = p.x;
+    let jumped = false;
+    for (let f = 0; f < 300; f++) {
+      programInput(prog, f, scratchInput);
+      p.update(DT, scratchInput, solids);
+      if (p.jumpedThisFrame || p.superJumpedThisFrame) jumped = true;
+      const feet = p.y + p.height;
+      for (const pad of loc.pads) {
+        if (p.onGround && p.x + p.width > pad.x && p.x < pad.x + pad.width &&
+            feet >= pad.y - 8 && feet <= pad.y + pad.height + 8) {
+          p.vy = CONFIG.PLAYER_SUPER_JUMP_VELOCITY * 1.5;
+          p.onGround = false;
+          jumped = true;
+        }
+      }
+      if (movers) {
+        for (const m of movers) {
+          const ox = m.x, oy = m.y;
+          stepMover(m, DT);
+          if (p.onGround && feet >= oy - 2 && feet <= oy + 4 && p.x + p.width > m.x && p.x < m.x + m.width) {
+            p.x += m.x - ox; p.y += m.y - oy;
+          }
+        }
+      }
+      if (p.x + p.width > W.width) { p.x = W.width - p.width; p.vx = 0; }
+      if (live && live.arena) { // boss arena walls (enforced by the main loop, not solids)
+        if (p.x < live.arena.l) { p.x = live.arena.l; p.vx = 0; }
+        if (p.x + p.width > live.arena.r) { p.x = live.arena.r - p.width; p.vx = 0; }
+      }
+      for (const t of loc.targets) if (aabbOverlap(p, t)) gains.add(t.id);
+      if (Math.abs(p.x + p.width / 2 - W.goal.x - 24) < 50 && Math.abs(p.y + p.height / 2 - W.goal.y - 20) < 50) goal = true;
+      if (live) {
+        for (const it of live.items) if (aabbOverlap(p, it)) liveGains.add(it.ref);
+        const r = stepDangers(p, enemies, live, st, f);
+        hurt += r.hurt; stomps += r.stomps; kills += r.kills;
+      }
+      if (p.y > PIT_Y) { W.hitLog = null; return null; }
+      const done =
+        (prog.kind === 'jump' && jumped && f > 1 && p.onGround) ||
+        (prog.kind === 'super' && jumped && p.onGround) ||
+        (prog.kind === 'walk' && p.onGround && (Math.abs(p.x - x0) >= BX || f > 40)) ||
+        (prog.kind === 'stop' && p.onGround && p.vx === 0) ||
+        (prog.kind === 'wait' && f >= 11 && p.onGround);
+      if (done) {
+        for (const b of W.hitLog) hits.add(b);
+        W.hitLog = null;
+        if (!p.onGround || p.crouching) return null;
+        if (live) {
+          // Look a little past the landing: don't stop right where a bear arrives
+          const idle = { left: false, right: false, down: false, jump: false, jumpHeld: false };
+          for (let g = 1; g <= 24 && !hurt; g++) {
+            p.update(DT, idle, solids);
+            hurt += stepDangers(p, enemies, live, st, f + g).hurt * 0.5;
+          }
+        }
+        return { x: p.x, y: p.y, height: p.height, feet: p.y + p.height, vx: p.vx, frames: f + 1, gains, hits, liveGains, hurt, stomps, kills, goal };
+      }
+    }
+    W.hitLog = null;
+    return null;
+  }
+
+  // Advances predicted enemies / hazards one frame and checks contact.
+  function stepDangers(p, enemies, live, st, f) {
+    let hurt = 0, stomps = 0, kills = 0;
+    if (st.ghost) return { hurt, stomps, kills };
+    for (const e of enemies) {
+      if (e.dead) continue;
+      if (e.boss) {
+        if (!e.active) continue;
+        if (e.stunT > 0) { e.stunT -= DT; continue; }  // frozen and harmless while stunned
+        e.vy = Math.min(e.vy + CONFIG.GRAVITY * DT, CONFIG.MAX_FALL_SPEED);
+        e.y += e.vy * DT;
+        if (e.y + e.height >= 432) {
+          if (!e.onGround && e.phase >= 2) live.shockwaves.push({ x: e.x + e.width / 2, radius: -200 * (f + 1) * DT, speed: 200, maxRadius: 80, born: f });
+          e.y = 432 - e.height; e.vy = 0; e.onGround = true;
+        }
+        e.x += e.vx * DT;
+        if (e.x <= e.pl) { e.x = e.pl; e.vx = Math.abs(e.vx); }
+        if (e.x + e.width >= e.pr) { e.x = e.pr - e.width; e.vx = -Math.abs(e.vx); }
+        if (e.phase >= 2) {
+          e.jumpT += DT;
+          if (e.jumpT >= 2.5 && e.onGround) { e.vy = -600; e.onGround = false; e.jumpT = 0; }
+        }
+      }
+      // mirrors GrizzlyBear.update: charges at the player's x (left edge) when close
+      let speed = e.boss ? 0 : e.vx;
+      if (e.charger) {
+        const dist = Math.abs(p.x - (e.x + e.width / 2));
+        if (!e.stunned && dist < CONFIG.GRIZZLY_DETECT_RANGE) {
+          e.charging = true;
+          e.vx = CONFIG.GRIZZLY_CHARGE_SPEED * (p.x > e.x + e.width / 2 ? 1 : -1);
+        } else if (e.charging) {
+          e.charging = false;
+          e.vx = CONFIG.GRIZZLY_SPEED * Math.sign(e.vx || 1);
+        }
+        speed = e.vx * (e.stunned ? 0.4 : 1);
+      }
+      if (!e.boss) e.x += speed * (e.mult || 1) * DT;
+      if (!e.boss) e.y += (e.vy || 0) * DT;
+      if (e.pl !== undefined && !e.boss) {
+        if (e.x <= e.pl) { e.x = e.pl; e.vx = Math.abs(e.vx); }
+        if (e.x + e.width >= e.pr) { e.x = e.pr - e.width; e.vx = -Math.abs(e.vx); }
+      }
+      // stomp uses the true box; getting hurt uses a slightly padded one
+      const window = e.height * (e.boss ? 0.35 : 0.45);
+      if (aabbOverlap(p, e)) {
+        if (!e.hazard && p.vy > 0 && (p.y + p.height - e.y) < window) {
+          stomps++;
+          e.hp = (e.hp || 1) - 1;
+          if (e.hp <= 0) { e.dead = true; kills++; } else { e.stunned = true; if (e.boss) e.stunT = 0.5; }
+          p.vy = (e.charger && e.hp > 0) || e.boss ? -500 : CONFIG.PLAYER_STOMP_BOUNCE;
+          p.onGround = false;
+          continue;
+        }
+      }
+      const pad = e.hazard ? 2 : 5;
+      if (e.boss && e.stunT > 0) continue; // stunned whale doesn't hurt (main loop checks !boss.stunned)
+      if (p.x < e.x + e.width + pad && p.x + p.width > e.x - pad && p.y < e.y + e.height + 2 && p.y + p.height > e.y - 2) {
+        if (!(p.vy > 0 && (p.y + p.height - e.y) < window) || e.hazard) { hurt++; e.dead = true; }
+      }
+    }
+    for (const sw of live.shockwaves) {
+      const r = sw.radius + sw.speed * f * DT;
+      if (r > sw.maxRadius) continue;
+      const d = Math.abs(p.x + p.width / 2 - sw.x);
+      if (p.y + p.height >= 430 && d < r + 22 && d > r - 22) hurt++;
+    }
+    return { hurt, stomps, kills };
+  }
+
+  function vxClass(vx) { return vx > 140 ? 1 : vx < -140 ? -1 : 0; }
+  function keyOf(st) {
+    return Math.round(st.x / BX) + '|' + Math.round(st.y + (st.height || CONFIG.PLAYER_HEIGHT)) + '|' + vxClass(st.vx);
+  }
+  const NORMAL_DIMS = { w: CONFIG.PLAYER_WIDTH, h: CONFIG.PLAYER_HEIGHT, powered: false };
+  // Standing state for a graph node (nodes store feet, so any player size works)
+  function nodeState(node, dims) {
+    return { x: node.x, y: node.feet - dims.h, vx: node.vx, width: dims.w, height: dims.h, powered: dims.powered };
+  }
+
+  function expand(W, node, dims) {
+    node.edges = [];
+    const st = nodeState(node, dims || NORMAL_DIMS);
+    for (const prog of PROGRAMS) {
+      const r = simulate(W, st, prog, null);
+      if (!r) continue;
+      const k = keyOf(r);
+      if (k === node.key && !r.gains.size && !r.hits.size) continue;
+      node.edges.push({ to: k, x: r.x, feet: r.feet, vx: r.vx, prog: prog.id, frames: r.frames,
+        gains: [...r.gains], hits: [...r.hits], goal: r.goal });
+    }
+  }
+
+  // ---- whole-level exploration (reachability test) ----
+  function explore(W, start) {
+    const nodes = new Map();
+    const startNode = { key: keyOf(start), x: start.x, feet: start.y + CONFIG.PLAYER_HEIGHT, vx: start.vx || 0, edges: null };
+    nodes.set(startNode.key, startNode);
+    const queue = [startNode];
+    while (queue.length) {
+      const node = queue.shift();
+      expand(W, node);
+      for (const e of node.edges) {
+        if (!nodes.has(e.to)) {
+          const to = { key: e.to, x: e.x, feet: e.feet, vx: e.vx, edges: null };
+          nodes.set(e.to, to);
+          queue.push(to);
+        }
+      }
+    }
+    return nodes;
+  }
+
+  function findStanding(W, at) {
+    const p = makePlayer({ x: at.x, y: at.y - 40 });
+    p.onGround = false;
+    const loc = W.local(at.x - 200, at.x + 200);
+    const inp = { left: false, right: false, down: false, jump: false, jumpHeld: false };
+    for (let i = 0; i < 120 && !p.onGround; i++) p.update(DT, inp, loc.solids);
+    return { x: p.x, y: p.y, vx: 0 };
+  }
+
+  function analyze(level) {
+    const W = buildWorld(level, { extraSolids: moverCopies(level) });
+    const start = findStanding(W, level.playerStart || { x: 96, y: 370 });
+    const t0 = performance.now();
+    const nodes = explore(W, start);
+    const gotT = new Set(), gotB = new Set();
+    for (const n of nodes.values()) for (const e of n.edges || []) {
+      e.gains.forEach(g => gotT.add(g));
+      e.hits.forEach(h => gotB.add(h));
+    }
+    return {
+      ms: Math.round(performance.now() - t0),
+      nodes,
+      targets: W.targets.length,
+      missedTargets: W.targets.filter(t => !gotT.has(t.id)).map(t => ({ kind: t.kind, x: Math.round(t.x), y: Math.round(t.y) })),
+      blocks: W.blocks.length,
+      missedBlocks: W.blocks.filter(b => !gotB.has(b.index)).map(b => ({ i: b.index, x: b.x, y: b.y, contents: b.ref.contents })),
+    };
+  }
+
+  // ==========================================
+  //  Live bot
+  // ==========================================
+  const Bot = {
+    enabled: false,
+    levelRef: null, Wg: null, Wd: null, cache: null,
+    plan: null,
+    input: { left: false, right: false, down: false, jump: false, jumpHeld: false },
+    status: '', target: null,
+  };
+
+  function resetForLevel() {
+    Bot.levelRef = level;
+    Bot.Wg = buildWorld(level, { extraSolids: moverCopies(level) }); // for route search
+    Bot.Wd = buildWorld(level);                                       // live checks
+    Bot.caches = { normal: new Map(), powered: new Map() };
+    Bot.plan = null;
+    Bot.skip = new Map();     // target -> gameTime until which it's ignored
+    Bot.chasing = [];
+    Bot.retries = 0;
+    // Background mapping: explore the whole level a node per frame so that
+    // long trips back to missed items are cheap later.
+    const start = findStanding(Bot.Wg, level.playerStart || { x: player.x, y: player.y });
+    const k0 = keyOf(start);
+    Bot.caches.normal.set(k0, { key: k0, x: start.x, feet: start.y + CONFIG.PLAYER_HEIGHT, vx: 0, edges: null });
+    Bot.bgQueue = [k0];
+    Bot.progress = { score: -1, x: 0, t: 0 };
+  }
+
+  // Binary min-heap of [cost, payload]
+  function Heap() { this.a = []; }
+  Heap.prototype.push = function (c, v) {
+    const a = this.a; a.push([c, v]);
+    let i = a.length - 1;
+    while (i > 0) { const p = (i - 1) >> 1; if (a[p][0] <= a[i][0]) break; [a[p], a[i]] = [a[i], a[p]]; i = p; }
+  };
+  Heap.prototype.pop = function () {
+    const a = this.a; const top = a[0]; const last = a.pop();
+    if (a.length) {
+      a[0] = last; let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = l + 1; let m = i;
+        if (l < a.length && a[l][0] < a[m][0]) m = l;
+        if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (m === i) break; [a[m], a[i]] = [a[i], a[m]]; i = m;
+      }
+    }
+    return top;
+  };
+
+  function liveSnapshot() {
+    const px = player.x;
+    const movers = (level.movingPlatforms || []).filter(m => Math.abs(m.x - px) < 1000).map(m => ({
+      x: m.x, y: m.y, width: m.width, height: m.height, semiSolid: !!m.semiSolid,
+      waypoints: m.waypoints, wp: m.currentWP, speed: m.speed,
+    }));
+    const items = level.collectibles.filter(c => !c.collected && c.type !== 'redCandle' && Math.abs(c.x - px) < 900)
+      .map(c => ({ ref: c, x: c.x, y: c.y, width: c.width, height: c.height }));
+    const enemies = [];
+    for (const e of level.enemies) {
+      if (!e.alive || Math.abs(e.x - px) > 700) continue;
+      enemies.push({ x: e.x, y: e.y, width: e.width, height: e.height, vx: e.awake === false ? 0 : (e.vx || 0),
+        pl: e.patrolLeft, pr: e.patrolRight, hp: e.hp || 1, charger: e instanceof GrizzlyBear, stunned: !!e.stunned,
+        charging: !!e.charging, mult: e.crashSpeedMult || 1 });
+    }
+    if (level.boss && level.boss.alive && Math.abs(level.boss.x - px) < 800) {
+      const b = level.boss;
+      enemies.push({ x: b.x, y: b.y, width: b.width, height: b.height, hp: b.hp, boss: true,
+        vx: b.activated ? (b.facingRight ? 1 : -1) * b.vx * (b.crashSpeedMult || 1) : 0, vy: b.vy || 0,
+        onGround: b.onGround, jumpT: b.jumpTimer, phase: b.phase, active: b.activated,
+        pl: b.arenaLeft, pr: b.arenaRight, stunT: b.stunned ? b.stunTimer : 0 });
+      for (const pr of b.projectiles || []) enemies.push({ x: pr.x, y: pr.y, width: pr.width, height: pr.height, vx: pr.vx || 0, vy: pr.vy || 0, hazard: true });
+    }
+    for (const c of level.collectibles) {
+      if (c.type === 'redCandle' && !c.collected && Math.abs(c.x - px) < 600) {
+        enemies.push({ x: c.x, y: c.y, width: c.width, height: c.height, vx: 0, vy: c.vy, hazard: true });
+      }
+    }
+    const shockwaves = level.boss && level.boss.alive ? level.boss.shockwaves.map(w => ({ x: w.x, radius: w.radius, speed: w.speed, maxRadius: w.maxRadius })) : [];
+    const arena = level.bossArena && level.boss && level.boss.alive && level.boss.activated
+      ? { l: level.bossArena.wallLeft, r: level.bossArena.wallRight } : null;
+    return { movers, items, enemies, shockwaves, arena };
+  }
+
+  function skipped(key) {
+    const until = Bot.skip.get(key);
+    return until !== undefined && until > gameTime;
+  }
+  function edgeValue(e) {
+    let v = 0;
+    for (const g of e.gains) {
+      const t = Bot.Wg.targetById.get(g);
+      if (t && !t.ref.collected && !skipped(t.ref) && level.collectibles.includes(t.ref)) v++;
+    }
+    for (const h of e.hits) if (!level.questionBlocks[h].used && !skipped('b' + h)) v++;
+    return v;
+  }
+  // What a move is worth, as keys for the skip list
+  function edgeKeys(e) {
+    return e.gains.map(g => Bot.Wg.targetById.get(g)).filter(Boolean).map(t => t.ref).concat(e.hits.map(h => 'b' + h));
+  }
+
+  // Chooses the next program: live-simulate every option from the exact
+  // current state, then search the move graph from where each one lands.
+  // Phase 1 looks for anything worth collecting and treats the goal as off
+  // limits (touching it ends the level); phase 2 heads for the goal.
+  function think() {
+    if (Bot.levelRef !== level) resetForLevel();
+    const st = { x: player.x, y: player.y, vx: player.vx, width: player.width, height: player.height,
+      powered: player.powered, invincible: player.invincible, ghost: player.invincible || player.damageInvTimer > 0.6 };
+    const live = liveSnapshot();
+    const here = keyOf(st);
+    const dims = { w: player.width, h: player._getStandingHeight(), powered: player.powered };
+    const cache = player.powered ? Bot.caches.powered : Bot.caches.normal;
+    const options = [];
+    for (const prog of PROGRAMS) {
+      const r = simulate(Bot.Wd, st, prog, live);
+      if (r) options.push({ prog, r, k: keyOf(r) });
+    }
+    if (!options.length) return null;
+    for (const phase of ['collect', 'goal']) {
+      if (phase === 'goal') {
+        const far = search('collect', options, here, cache, dims, 3000);
+        if (far) { Bot.status = 'going back for missed items'; return far; }
+      }
+      if (phase === 'goal' && Bot.skip.size && Bot.retries < 3) {
+        Bot.retries++;
+        // Items we only gave up on temporarily: try them once more before finishing
+        Bot.skip.clear();
+        const again = search('collect', options, here, cache, dims, 500);
+        if (again) { Bot.status = 'collecting'; return again; }
+      }
+      const found = search(phase, options, here, cache, dims, phase === 'collect' ? 60 : 200);
+      if (found) {
+        Bot.status = phase === 'collect' ? 'collecting' : 'heading to goal';
+        return found;
+      }
+      if (phase === 'collect') {
+        // Nothing nearby: look further before giving up on stragglers
+        const far = search(phase, options, here, cache, dims, 500);
+        if (far) { Bot.status = 'collecting'; return far; }
+      }
+    }
+    Bot.status = 'searching';
+    return null;
+  }
+
+  function search(phase, options, here, cache, dims, budget) {
+    const collect = phase === 'collect';
+    const shielded = player.powered || player.hasHeadband;
+    const hurtCost = shielded ? 700 : 3000;
+    const noWait = Bot.waitFrames > 120; // been waiting ~2s: something is camping us, act instead
+    const heap = new Heap();
+    const origin = new Map();
+    const dist = new Map();
+    let best = null;
+    for (const { prog, r, k } of options) {
+      if (collect && r.goal) continue;
+      if (noWait && prog.kind === 'wait') continue;
+      const cost = r.frames + r.hurt * hurtCost - r.kills * 40 + (r.stomps - r.kills) * 40;
+      const liveKeys = collect ? [...r.liveGains].filter(g => !skipped(g))
+        .concat([...r.hits].filter(h => !level.questionBlocks[h].used && !skipped('b' + h)).map(h => 'b' + h)) : [];
+      const value = collect ? liveKeys.length : (r.goal ? 1 : 0);
+      if (value > 0 && r.hurt === 0) {
+        const c = cost - value * 8;
+        if (!best || c < best.cost) best = { cost: c, prog, keys: liveKeys };
+      }
+      if (k === here && value === 0 && prog.kind !== 'wait') continue;
+      if (cost < (dist.get(k) ?? Infinity)) {
+        dist.set(k, cost);
+        origin.set(k, prog);
+        if (!cache.has(k)) cache.set(k, { key: k, x: r.x, feet: r.feet, vx: r.vx, edges: null });
+        heap.push(cost, k);
+      }
+    }
+    let expansions = 0, pops = 0;
+    while (heap.a.length && pops < 20000) {
+      const [d, k] = heap.pop();
+      pops++;
+      if (d > (dist.get(k) ?? Infinity)) continue;
+      if (best && d >= best.cost) break;
+      const node = cache.get(k);
+      const prog0 = origin.get(k);
+      if (!node.edges) {
+        if (expansions >= budget) continue;
+        expand(Bot.Wg, node, dims);
+        expansions++;
+      }
+      for (const e of node.edges) {
+        if (collect && e.goal) continue;
+        const c = d + e.frames + 4;
+        const v = collect ? edgeValue(e) : (e.goal ? 1 : 0);
+        if (v > 0 && (!best || c - v * 8 < best.cost)) best = { cost: c - v * 8, prog: prog0, keys: collect ? edgeKeys(e) : [] };
+        if (c < (dist.get(e.to) ?? Infinity)) {
+          dist.set(e.to, c);
+          origin.set(e.to, prog0);
+          if (!cache.has(e.to)) cache.set(e.to, { key: e.to, x: e.x, feet: e.feet, vx: e.vx, edges: null });
+          heap.push(c, e.to);
+        }
+      }
+    }
+    if (best) Bot.chasing = best.keys || [];
+    return best ? best.prog : null;
+  }
+
+  function planDone(plan) {
+    const p = plan.prog, f = plan.frame;
+    if (!player.onGround) { plan.jumped = true; return false; }
+    if (p.kind === 'jump') return plan.jumped && f > 1;
+    if (p.kind === 'super') return plan.jumped;
+    if (p.kind === 'walk') return Math.abs(player.x - plan.x0) >= BX || f > 40;
+    if (p.kind === 'stop') return player.vx === 0;
+    if (p.kind === 'wait') return f >= 12;
+    return true;
+  }
+
+  function backgroundMap() {
+    const cache = Bot.caches.normal;
+    while (Bot.bgQueue.length) {
+      const node = cache.get(Bot.bgQueue.shift());
+      if (!node || node.edges) continue;
+      expand(Bot.Wg, node, NORMAL_DIMS);
+      for (const e of node.edges) {
+        if (!cache.has(e.to)) {
+          cache.set(e.to, { key: e.to, x: e.x, feet: e.feet, vx: e.vx, edges: null });
+          Bot.bgQueue.push(e.to);
+        }
+      }
+      return; // one node per frame
+    }
+  }
+
+  // Called every fixed step before the game update
+  function tick() {
+    const I = Bot.input;
+    I.left = I.right = I.down = I.jump = I.jumpHeld = false;
+    if (!Bot.enabled || !player || player.deathAnimating || deathPauseTimer > 0) {
+      Bot.plan = null;
+      return;
+    }
+    if (Bot.levelRef === level && Bot.bgQueue.length) backgroundMap();
+    // No score and no real movement for 6s: whatever we're chasing is being
+    // guarded (a camping bear, a lift that never lines up). Skip it for 30s.
+    if (Bot.levelRef === level) {
+      const pr = Bot.progress;
+      if (player.score !== pr.score || Math.abs(player.x - pr.x) > 160) {
+        pr.score = player.score; pr.x = player.x; pr.t = gameTime;
+      } else if (gameTime - pr.t > 6) {
+        for (const k of Bot.chasing) Bot.skip.set(k, gameTime + 30);
+        pr.t = gameTime;
+        Bot.status = 'giving up on a guarded item';
+      }
+    }
+    if (Bot.plan) {
+      if (player.jumpedThisFrame || player.superJumpedThisFrame) Bot.plan.jumped = true;
+      if (planDone(Bot.plan) || Bot.plan.frame > 320) Bot.plan = null;
+    }
+    if (!Bot.plan) {
+      if (!player.onGround) return;
+      const prog = think();
+      if (!prog) { Bot.status = 'stuck'; return; }
+      Bot.plan = { prog, frame: 0, jumped: false, x0: player.x };
+      Bot.waitFrames = prog.kind === 'wait' ? (Bot.waitFrames || 0) + 12 : 0;
+    }
+    programInput(Bot.plan.prog, Bot.plan.frame, I);
+    Bot.plan.frame++;
+  }
+
+  function setEnabled(on) {
+    Bot.enabled = on;
+    Bot.plan = null;
+  }
+
+  // Plays a level with the bot as fast as possible (no rendering) and reports
+  // what it collected. opts: { noEnemies, keepLives } — for testing only.
+  function benchmark(levelIndex, maxSeconds, opts) {
+    opts = opts || {};
+    startGame('chad', levelIndex);
+    if (opts.noEnemies) { level.enemies.length = 0; level.redCandleZones = []; }
+    setEnabled(true);
+    const lv = level;
+    const tracked = lv.collectibles.filter(c => c.type === 'bull' || c.type === 'dividend');
+    let deaths = 0, wasDead = false, t = 0;
+    const wall0 = performance.now();
+    while (t < maxSeconds && currentState === GameState.PLAYING && level === lv) {
+      update(FIXED_DT);
+      t += FIXED_DT;
+      if (player.deathAnimating && !wasDead) deaths++;
+      wasDead = player.deathAnimating;
+      if (opts.keepLives && player.lives <= 1) player.lives = 3;
+    }
+    setEnabled(false);
+    const remaining = new Set(lv.collectibles);
+    const left = tracked.filter(c => remaining.has(c));
+    const count = (arr, k) => arr.filter(c => c.type === k).length;
+    return {
+      level: lv.name, completed: currentState === GameState.LEVEL_COMPLETE, gameOver: currentState === GameState.GAME_OVER,
+      seconds: Math.round(t), wallMs: Math.round(performance.now() - wall0), deaths,
+      bulls: (count(tracked, 'bull') - count(left, 'bull')) + '/' + count(tracked, 'bull'),
+      coins: (count(tracked, 'dividend') - count(left, 'dividend')) + '/' + count(tracked, 'dividend'),
+      blocks: lv.questionBlocks.filter(b => b.used).length + '/' + lv.questionBlocks.length,
+      missed: left.map(c => c.type + '@' + Math.round(c.x) + ',' + Math.round(c.y)),
+      missedBlocks: lv.questionBlocks.filter(b => !b.used).map(b => b.x + ',' + b.y),
+    };
+  }
+
+  return { PROGRAMS, buildWorld, simulate, analyze, findStanding, Bot, tick, setEnabled, keyOf, moverCopies, benchmark };
+})();
+  </script>
+  <script>
+// ==========================================
 //  BULL RUN - Main Game Loop & State Machine
 // ==========================================
 
@@ -9759,6 +10455,9 @@ const ctx = canvas.getContext('2d');
 const world3d = World3D.create(); // null -> classic 2D renderer
 
 const input = new InputHandler();
+input.bot = AutoPilot.Bot.input;
+const AUTOPLAY = /[?&]autoplay\b/.test(location.search);
+if (AUTOPLAY) AutoPilot.setEnabled(true);
 const touchControls = new TouchControls(canvas, input);
 const audio = new AudioManager();
 const particles = new ParticleSystem();
@@ -9807,6 +10506,34 @@ let dhTickTimer = 0;
 // Level system
 let currentLevelIndex = 0;
 let goalLockedHintTimer = 0;
+let botUsedThisRun = false; // runs that used the autopilot never reach the leaderboard
+
+// Fun extras: stomp combos, bull streaks, perfect-portfolio bonus, demo mode
+let stompChain = 0;          // stomps since last touching the ground
+let bullStreak = 0, bullStreakTimer = 0;
+let levelStartItems = new Set(); // bulls + coins present when the level began
+let levelItemsCollected = 0;
+let demoMode = false, titleIdleTime = 0, demoEndTimer = 0;
+const PERFECT_BONUS = 5000;
+
+function beginLevelTracking() {
+  levelStartItems = new Set(level.collectibles.filter(c => c.type === 'bull' || c.type === 'dividend'));
+  levelItemsCollected = 0;
+  stompChain = 0;
+  bullStreak = 0;
+  bullStreakTimer = 0;
+}
+
+// Points for a stomp: doubles for each extra stomp before landing (max x8)
+function stompAward(base, enemy) {
+  const mult = Math.min(8, 1 << stompChain);
+  stompChain++;
+  const pts = base * mult;
+  player.score += pts;
+  floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20,
+    '+' + pts + (mult > 1 ? '  COMBO x' + mult + '!' : ''), mult > 1 ? '#FF66CC' : CONFIG.COLORS.BULL_GOLD, mult > 1 ? 22 : 18);
+  audio.playStomp(stompChain - 1);
+}
 
 // Pause (P / Esc, auto-pauses when the tab is hidden)
 let gamePaused = false;
@@ -9858,6 +10585,7 @@ function startGame(characterType, levelIndex) {
   dhTickTimer = 0;
   flashCrashTimer = 0;
   gamePaused = false;
+  botUsedThisRun = false;
   leaderboard.resetSession();
 
   // Wire up question block callbacks
@@ -9869,6 +10597,7 @@ function startGame(characterType, levelIndex) {
   }
 
   currentState = GameState.PLAYING;
+  beginLevelTracking();
 
   // Try to fetch live stock data
   fetchLiveStockData().then(stocks => {
@@ -9909,6 +10638,31 @@ function update(dt) {
   // Mute toggle (M) works everywhere
   if (input.wasPressed('KeyM')) audio.toggleMute();
 
+  // Autopilot toggle (B)
+  if (input.wasPressed('KeyB')) {
+    AutoPilot.setEnabled(!AutoPilot.Bot.enabled);
+    if (player && currentState === GameState.PLAYING) {
+      floatingText.spawn(player.x + player.width / 2, player.y - 30,
+        AutoPilot.Bot.enabled ? 'AUTOPILOT ON' : 'AUTOPILOT OFF', '#66CCFF', 20, 1.5);
+    }
+  }
+  // Demo mode: any key returns to the title; the demo also ends on its own
+  if (demoMode) {
+    if (anyInputThisFrame()) { endDemo(); input.clearFrameState(); return; }
+    if (currentState !== GameState.PLAYING) {
+      demoEndTimer += dt;
+      if (demoEndTimer > 4) { endDemo(); return; }
+    }
+  }
+  // ?autoplay: the bot also clicks through menus so it can play unattended
+  if (AUTOPLAY && AutoPilot.Bot.enabled) {
+    if (currentState === GameState.TITLE) startGame(Math.random() < 0.5 ? 'chad' : 'diana', 0);
+    else if ((currentState === GameState.LEVEL_COMPLETE && levelCompleteScreen.animTime > 2.6) ||
+             (currentState === GameState.GAME_OVER && gameOverScreen.animTime > 3)) {
+      input.justPressed['Enter'] = true;
+    }
+  }
+
   if (currentState === GameState.PLAYING) {
     if (input.wasPressed('KeyP') || input.wasPressed('Escape')) {
       gamePaused = !gamePaused;
@@ -9920,6 +10674,8 @@ function update(dt) {
       touchControls.update(dt, currentState);
       return;
     }
+    AutoPilot.tick();
+    if (AutoPilot.Bot.enabled) botUsedThisRun = true;
   }
 
   switch (currentState) {
@@ -9941,7 +10697,32 @@ function update(dt) {
   touchControls.update(dt, currentState);
 }
 
+function anyInputThisFrame() {
+  return Object.keys(input.justPressed).length > 0 || Object.keys(input.touchJustPressed).length > 0;
+}
+
+function startDemo() {
+  demoMode = true;
+  demoEndTimer = 0;
+  startGame(Math.random() < 0.5 ? 'chad' : 'diana', Math.floor(Math.random() * 4));
+  AutoPilot.setEnabled(true);
+}
+
+function endDemo() {
+  demoMode = false;
+  AutoPilot.setEnabled(false);
+  titleScreen = new TitleScreen();
+  currentState = GameState.TITLE;
+  titleIdleTime = 0;
+}
+
 function updateTitle(dt) {
+  // Idle on the title screen for a while: the computer player shows off a level
+  titleIdleTime = anyInputThisFrame() ? 0 : titleIdleTime + dt;
+  if (titleIdleTime > 20 && titleScreen.phase === 'title' && !AUTOPLAY) {
+    startDemo();
+    return;
+  }
   const result = titleScreen.update(dt, input);
   if (result === 'start') {
     audio.init();
@@ -10024,6 +10805,9 @@ function updatePlaying(dt) {
     particles.rocketBoost(player.x + player.width / 2, player.y + player.height);
   }
 
+  if (player.onGround) stompChain = 0;
+  if (bullStreakTimer > 0) { bullStreakTimer -= dt; if (bullStreakTimer <= 0) bullStreak = 0; }
+
   // Grizzly stomp combo: reset if player touches ground
   if (grizzlyComboTarget && player.onGround) {
     if (grizzlyComboTarget.alive) {
@@ -10099,9 +10883,7 @@ function updatePlaying(dt) {
             player.vy = CONFIG.PLAYER_STOMP_BOUNCE;
             grizzlyComboTarget = null;
             particles.bearDeath(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2);
-            floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, '+500', CONFIG.COLORS.BULL_GOLD, 22);
-            player.score += 500;
-            audio.playStomp();
+            stompAward(500, enemy);
           } else {
             // First stomp — high bounce, must land again without touching ground
             player.vy = -500; // Higher bounce for combo opportunity
@@ -10115,13 +10897,12 @@ function updatePlaying(dt) {
           // STOMP baby bears
           const killed = enemy.stomp();
           player.vy = CONFIG.PLAYER_STOMP_BOUNCE;
-          audio.playStomp();
 
           if (killed) {
             particles.bearDeath(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2);
-            floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, '+200', CONFIG.COLORS.BULL_GOLD);
-            player.score += 200;
+            stompAward(200, enemy);
           } else {
+            audio.playStomp();
             floatingText.spawn(enemy.x + enemy.width / 2, enemy.y - 20, 'HIT!', CONFIG.COLORS.TICKER_RED, 18);
             player.score += 50;
           }
@@ -10150,9 +10931,17 @@ function updatePlaying(dt) {
 
     c.collected = true;
 
+    if (levelStartItems.has(c)) levelItemsCollected++;
     if (c.type === 'bull') {
       const result = player.collectBull();
-      audio.playCollect();
+      bullStreak = bullStreakTimer > 0 ? bullStreak + 1 : 1;
+      bullStreakTimer = 0.9;
+      audio.playCollect(bullStreak);
+      if (bullStreak % 10 === 0) {
+        player.score += 500;
+        floatingText.spawn(player.x + player.width / 2, player.y - 46,
+          'BULL STREAK x' + bullStreak + '!  +$500', '#00FF88', 22, 1.6);
+      }
       particles.bullCollect(c.x + c.width / 2, c.y + c.height / 2);
       floatingText.spawn(c.x + c.width / 2, c.y - 10, '+$100', CONFIG.COLORS.BULL_GOLD, 16);
       if (result === 'diamondHands') {
@@ -10480,7 +11269,12 @@ function updatePlaying(dt) {
     // Calculate time bonus: faster = more points
     const timeBonus = Math.max(0, Math.round(5000 - levelTime * 50));
     player.score += timeBonus;
+    const perfect = levelStartItems.size > 0 && levelItemsCollected >= levelStartItems.size;
+    if (perfect) player.score += PERFECT_BONUS;
     levelCompleteScreen = new LevelCompleteScreen();
+    levelCompleteScreen.itemsCollected = levelItemsCollected;
+    levelCompleteScreen.itemsTotal = levelStartItems.size;
+    levelCompleteScreen.perfect = perfect;
     levelCompleteScreen.finalScore = player.score;
     levelCompleteScreen.bullsCollected = player.totalBullsCollected;
     levelCompleteScreen.timeTaken = levelTime;
@@ -10528,6 +11322,7 @@ function playerDeath(cause) {
 }
 
 function triggerLeaderboard(score, bulls, time, character) {
+  if (botUsedThisRun) return; // computer-played runs don't count
   if (!leaderboard.isAvailable() || leaderboard.submittedThisSession) return;
 
   const screen = currentState === GameState.LEVEL_COMPLETE ? levelCompleteScreen : gameOverScreen;
@@ -10628,6 +11423,7 @@ function updateLevelComplete(dt) {
         });
       }
       currentState = GameState.PLAYING;
+      beginLevelTracking();
     } else {
       // All levels complete! Submit final score to leaderboard before returning to title
       if (!leaderboard.submittedThisSession) {
@@ -10899,6 +11695,16 @@ function renderPlaying() {
 
   // HUD (screen space)
   hud.render(ctx, player, CONFIG.VIRTUAL_WIDTH);
+
+  if (AutoPilot.Bot.enabled) {
+    ctx.fillStyle = 'rgba(0, 20, 40, 0.75)';
+    ctx.fillRect(CONFIG.VIRTUAL_WIDTH / 2 - 90, 40, 180, 24);
+    ctx.fillStyle = '#66CCFF';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(demoMode ? 'DEMO · PRESS ANY KEY' : 'AUTOPILOT · ' + (AutoPilot.Bot.status || '...'), CONFIG.VIRTUAL_WIDTH / 2, 52);
+  }
 
   // Boss health bar
   if (level.boss && level.boss.activated) {
