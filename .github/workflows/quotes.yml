@@ -1,0 +1,35 @@
+name: Update stock quotes
+
+on:
+  schedule:
+    # Every 15 minutes while US markets are open (13:00-21:59 UTC, Mon-Fri),
+    # plus once a day so weekends still show the last close.
+    - cron: '*/15 13-21 * * 1-5'
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quotes
+  cancel-in-progress: true
+
+jobs:
+  quotes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/quotes.py
+      # Publish to an orphan branch with a single commit, so quote updates
+      # never touch main (no Pages rebuilds, no history growth).
+      - name: Publish to quotes branch
+        run: |
+          mkdir out && mv quotes.json out/
+          cd out
+          git init -q -b quotes
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898333+github-actions[bot]@users.noreply.github.com'
+          git add quotes.json
+          git commit -q -m "Quotes $(date -u +%FT%TZ)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" quotes

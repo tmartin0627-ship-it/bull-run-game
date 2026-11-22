@@ -1819,51 +1819,53 @@ class RunningDiamond {
 
   render(ctx, camera) {
     if (this.collected) return;
+    if (typeof world3d !== 'undefined' && world3d && world3d.active) return; // drawn in 3D
+    if (this.lifetime < 2.5 && Math.floor(this.lifetime * 8) % 2) return;
     const sx = this.x - camera.x;
     const sy = this.y - camera.y;
     if (sx + this.width < -50 || sx > CONFIG.VIRTUAL_WIDTH + 50) return;
+    const cx = sx + this.width / 2, cy = sy + this.height / 2, s = this.width * 0.62, t = this.animTime;
 
-    const cx = sx + this.width / 2;
-    const cy = sy + this.height / 2;
-    const s = this.width * 0.5;
+    // Halo
+    const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, s * 2.6);
+    halo.addColorStop(0, 'rgba(190,240,255,0.65)'); halo.addColorStop(1, 'rgba(120,200,255,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(cx, cy, s * 2.6, 0, Math.PI * 2); ctx.fill();
 
-    // Bright glow
-    ctx.globalAlpha = 0.35 + Math.sin(this.animTime * 8) * 0.15;
-    ctx.fillStyle = '#88DDFF';
-    ctx.beginPath();
-    ctx.arc(cx, cy, s * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Brilliant cut seen from the side: crown on top, pavilion below; the facet
+    // colours rotate so it looks like it's turning.
+    const sq = Math.abs(Math.cos(t * 2.8)) * 0.35 + 0.65;     // fake spin
+    const w = s * sq, top = cy - s * 0.55, gird = cy - s * 0.12, tip = cy + s * 0.95;
+    const facets = [
+      [[cx - w, gird], [cx - w * 0.55, top], [cx - w * 0.15, gird]],
+      [[cx - w * 0.55, top], [cx + w * 0.55, top], [cx + w * 0.15, gird], [cx - w * 0.15, gird]],
+      [[cx + w * 0.55, top], [cx + w, gird], [cx + w * 0.15, gird]],
+      [[cx - w, gird], [cx - w * 0.15, gird], [cx, tip]],
+      [[cx - w * 0.15, gird], [cx + w * 0.15, gird], [cx, tip]],
+      [[cx + w * 0.15, gird], [cx + w, gird], [cx, tip]],
+    ];
+    facets.forEach((f, i) => {
+      const h = (t * 90 + i * 55) % 360;
+      ctx.fillStyle = i === 1 ? 'hsl(195,100%,' + (82 + Math.sin(t * 6) * 8) + '%)'
+        : 'hsl(' + (190 + Math.sin(t * 3 + i) * 25) + ',' + (60 + (i % 2) * 30) + '%,' + (58 + ((i * 37 + h) % 30)) + '%)';
+      ctx.beginPath(); ctx.moveTo(f[0][0], f[0][1]);
+      for (let k = 1; k < f.length; k++) ctx.lineTo(f[k][0], f[k][1]);
+      ctx.closePath(); ctx.fill();
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - w, gird); ctx.lineTo(cx - w * 0.55, top); ctx.lineTo(cx + w * 0.55, top);
+    ctx.lineTo(cx + w, gird); ctx.lineTo(cx, tip); ctx.closePath(); ctx.stroke();
 
-    // Diamond shape
-    ctx.fillStyle = '#AAEEFF';
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - s);
-    ctx.lineTo(cx + s, cy);
-    ctx.lineTo(cx, cy + s);
-    ctx.lineTo(cx - s, cy);
-    ctx.closePath();
-    ctx.fill();
-
-    // Top facet highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - s);
-    ctx.lineTo(cx + s * 0.3, cy - s * 0.3);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx - s * 0.3, cy - s * 0.3);
-    ctx.closePath();
-    ctx.fill();
-
-    // Sparkle particles orbiting
-    ctx.fillStyle = '#FFFFFF';
+    // Twinkling four-point stars
     for (let i = 0; i < 4; i++) {
-      const angle = this.animTime * 5 + i * (Math.PI / 2);
-      const dist = s * 1.3;
-      const px = cx + Math.cos(angle) * dist;
-      const py = cy + Math.sin(angle) * dist;
-      ctx.globalAlpha = 0.5 + Math.sin(this.animTime * 10 + i) * 0.5;
-      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+      const a = t * 1.3 + i * Math.PI / 2, tw = Math.max(0, Math.sin(t * 5.5 + i * 1.9));
+      if (tw < 0.05) continue;
+      const px = cx + Math.cos(a) * s * 1.7, py = cy + Math.sin(a) * s * 1.4, r = 2 + tw * 6;
+      ctx.globalAlpha = tw; ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath(); ctx.moveTo(px, py - r); ctx.lineTo(px + r * 0.22, py); ctx.lineTo(px, py + r);
+      ctx.lineTo(px - r * 0.22, py); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(px - r, py); ctx.lineTo(px, py + r * 0.22); ctx.lineTo(px + r, py);
+      ctx.lineTo(px, py - r * 0.22); ctx.closePath(); ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -3666,8 +3668,9 @@ class Player {
       ctx.globalAlpha = 1;
     }
 
-    // Diamond Hands invincibility glow
-    if (this.diamondHands) {
+    // Diamond Hands invincibility glow (2D only; the 3D layer has its own aura)
+    const in3D = typeof world3d !== 'undefined' && world3d && world3d.active;
+    if (this.diamondHands && !in3D) {
       // Diamond-shaped sparkling aura
       const cx = screenX + this.width / 2;
       const cy = screenY + this.height / 2;
@@ -3704,13 +3707,13 @@ class Player {
       }
       ctx.globalAlpha = 1;
 
-      // Rainbow cycle border
+      // Soft iridescent halo instead of a hard-edged box
       const hue = (this.animTime * 200) % 360;
-      ctx.globalAlpha = 0.2;
-      ctx.fillStyle = 'hsl(' + hue + ', 100%, 70%)';
-      ctx.fillRect(screenX - 2, screenY - 2, this.width + 4, this.height + 4);
-      ctx.globalAlpha = 1;
-    } else if (this.invincible) {
+      const hg = ctx.createRadialGradient(cx, cy, 0, cx, cy, this.height * 0.9);
+      hg.addColorStop(0, 'hsla(' + hue + ',100%,75%,0.28)'); hg.addColorStop(1, 'hsla(' + hue + ',100%,75%,0)');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.arc(cx, cy, this.height * 0.9, 0, Math.PI * 2); ctx.fill();
+    } else if (this.invincible && !in3D) {
       // Generic invincibility glow (fallback)
       ctx.globalAlpha = 0.3;
       ctx.fillStyle = CONFIG.COLORS.BULL_GOLD;
@@ -4105,20 +4108,20 @@ const LEVEL_SPACEX = {
   // Mid-level respawn points (x = flag center, placed on solid ground)
   checkpoints: [{ x: 3400 }, { x: 6400 }],
 
-  // Fallback ticker — SPCX (real Nasdaq close $160.95, +19% on 2026-06-12 debut)
+  // Fallback ticker (real closes, 2026-11-20) — replaced by live quotes when available
   tickerStocks: [
-    { symbol: 'SPCX', price: 160.95, change: 19.2 },
-    { symbol: 'TSLA', price: 488.54, change: 4.2 },
-    { symbol: 'AAPL', price: 232.47, change: 1.2 },
-    { symbol: 'MSFT', price: 415.30, change: 0.8 },
-    { symbol: 'NVDA', price: 142.62, change: 2.7 },
-    { symbol: 'BA', price: 178.42, change: -6.9 },
-    { symbol: 'AMZN', price: 228.93, change: 1.1 },
-    { symbol: 'GS', price: 612.55, change: 0.4 },
-    { symbol: 'JPM', price: 265.80, change: 0.7 },
-    { symbol: 'V', price: 311.04, change: 0.2 },
-    { symbol: 'DIS', price: 112.36, change: -0.5 },
-    { symbol: 'KO', price: 71.15, change: 0.1 },
+    { symbol: 'SPCX', price: 127.79, change: -7.7 },
+    { symbol: 'TSLA', price: 345.82, change: -7.6 },
+    { symbol: 'AAPL', price: 342.56, change: -1.9 },
+    { symbol: 'MSFT', price: 484.52, change: -2.8 },
+    { symbol: 'NVDA', price: 125.53, change: -14.0 },
+    { symbol: 'BA', price: 155.89, change: -2.9 },
+    { symbol: 'AMZN', price: 246.82, change: -4.1 },
+    { symbol: 'GS', price: 790.69, change: -6.7 },
+    { symbol: 'JPM', price: 310.53, change: -3.0 },
+    { symbol: 'V', price: 401.87, change: -0.1 },
+    { symbol: 'DIS', price: 117.98, change: -1.9 },
+    { symbol: 'KO', price: 96.99, change: 0.9 },
   ],
 
   groundSegments: [
@@ -4282,20 +4285,20 @@ const LEVEL_ANTHROPIC = {
 
   checkpoints: [{ x: 3800, y: 240 }, { x: 5000, y: -300 }, { x: 7500 }],
 
-  // Fallback ticker — ANT: IPO priced $83, opened $111.50 (+34%) on 2026-11-19
+  // Fallback ticker (real closes, 2026-11-20) — ANT IPO'd at $83 on 2026-11-19
   tickerStocks: [
-    { symbol: 'ANT', price: 111.50, change: 34.3 },
-    { symbol: 'NVDA', price: 142.62, change: 2.7 },
-    { symbol: 'GOOGL', price: 178.20, change: 1.4 },
-    { symbol: 'AMZN', price: 228.93, change: 1.1 },
-    { symbol: 'MSFT', price: 415.30, change: 0.8 },
-    { symbol: 'AMD', price: 156.40, change: 2.1 },
-    { symbol: 'AVGO', price: 241.10, change: 1.9 },
-    { symbol: 'TSM', price: 198.75, change: 1.6 },
-    { symbol: 'MU', price: 112.30, change: 2.4 },
-    { symbol: 'SPCX', price: 160.95, change: 19.2 },
-    { symbol: 'AAPL', price: 232.47, change: 0.6 },
-    { symbol: 'META', price: 612.04, change: 0.9 },
+    { symbol: 'ANT', price: 88.91, change: -8.5 },
+    { symbol: 'NVDA', price: 125.53, change: -14.0 },
+    { symbol: 'GOOGL', price: 265.29, change: -2.7 },
+    { symbol: 'AMZN', price: 246.82, change: -4.1 },
+    { symbol: 'MSFT', price: 484.52, change: -2.8 },
+    { symbol: 'AMD', price: 424.39, change: -13.2 },
+    { symbol: 'AVGO', price: 304.41, change: -12.2 },
+    { symbol: 'TSM', price: 318.71, change: -9.5 },
+    { symbol: 'MU', price: 594.51, change: -13.9 },
+    { symbol: 'SPCX', price: 127.79, change: -7.7 },
+    { symbol: 'AAPL', price: 342.56, change: -1.9 },
+    { symbol: 'META', price: 560.84, change: -5.9 },
   ],
 
   groundSegments: [
@@ -4478,38 +4481,38 @@ const LEVEL_1 = {
   // Mid-level respawn points (x = flag center, placed on solid ground)
   checkpoints: [{ x: 3200 }, { x: 6800 }],
 
-  // Dow 30 stock ticker — fallback data (overridden by live API fetch if available)
+  // Dow 30 ticker — real closes from 2026-11-20, replaced by live quotes when available
   tickerStocks: [
-    { symbol: 'AAPL', price: 232.47, change: 1.2 },
-    { symbol: 'MSFT', price: 415.30, change: 0.8 },
-    { symbol: 'AMGN', price: 313.55, change: -0.4 },
-    { symbol: 'AXP', price: 298.10, change: 1.5 },
-    { symbol: 'BA', price: 178.42, change: -1.1 },
-    { symbol: 'CAT', price: 362.80, change: 0.6 },
-    { symbol: 'CRM', price: 332.15, change: 1.9 },
-    { symbol: 'CSCO', price: 58.73, change: 0.3 },
-    { symbol: 'CVX', price: 155.60, change: -0.7 },
-    { symbol: 'DIS', price: 112.88, change: 2.1 },
-    { symbol: 'GS', price: 598.45, change: 0.9 },
-    { symbol: 'HD', price: 388.20, change: -0.3 },
-    { symbol: 'HON', price: 210.35, change: 0.4 },
-    { symbol: 'IBM', price: 228.90, change: 1.1 },
-    { symbol: 'JNJ', price: 152.44, change: -0.2 },
-    { symbol: 'JPM', price: 252.68, change: 1.3 },
-    { symbol: 'KO', price: 61.35, change: 0.5 },
-    { symbol: 'MCD', price: 295.80, change: -0.6 },
-    { symbol: 'MMM', price: 135.22, change: 2.4 },
-    { symbol: 'MRK', price: 99.15, change: -1.8 },
-    { symbol: 'NKE', price: 71.50, change: -2.3 },
-    { symbol: 'PG', price: 168.92, change: 0.7 },
-    { symbol: 'TRV', price: 258.40, change: 1.0 },
-    { symbol: 'UNH', price: 528.75, change: -0.5 },
-    { symbol: 'V', price: 318.60, change: 1.4 },
-    { symbol: 'VZ', price: 40.88, change: 0.2 },
-    { symbol: 'WBA', price: 10.25, change: -3.5 },
-    { symbol: 'WMT', price: 92.44, change: 0.8 },
-    { symbol: 'DOW', price: 42.30, change: -1.2 },
-    { symbol: 'INTC', price: 20.15, change: -2.8 },
+    { symbol: 'AAPL', price: 342.56, change: -1.9 },
+    { symbol: 'AMGN', price: 435.64, change: -0.1 },
+    { symbol: 'AMZN', price: 246.82, change: -4.1 },
+    { symbol: 'AXP', price: 301.70, change: -3.0 },
+    { symbol: 'BA', price: 155.89, change: -2.9 },
+    { symbol: 'CAT', price: 510.45, change: -5.0 },
+    { symbol: 'CRM', price: 180.62, change: -1.5 },
+    { symbol: 'CSCO', price: 90.64, change: -4.3 },
+    { symbol: 'CVX', price: 208.37, change: 0.9 },
+    { symbol: 'DIS', price: 117.98, change: -1.9 },
+    { symbol: 'GS', price: 790.69, change: -6.7 },
+    { symbol: 'HD', price: 339.04, change: 0.7 },
+    { symbol: 'HON', price: 212.64, change: -2.4 },
+    { symbol: 'IBM', price: 224.44, change: 0.2 },
+    { symbol: 'JNJ', price: 270.47, change: 1.2 },
+    { symbol: 'JPM', price: 310.53, change: -3.0 },
+    { symbol: 'KO', price: 96.99, change: 0.9 },
+    { symbol: 'MCD', price: 273.24, change: 0.3 },
+    { symbol: 'MMM', price: 177.99, change: -0.3 },
+    { symbol: 'MRK', price: 133.72, change: 0.7 },
+    { symbol: 'MSFT', price: 484.52, change: -2.8 },
+    { symbol: 'NKE', price: 32.92, change: -4.1 },
+    { symbol: 'NVDA', price: 125.53, change: -14.0 },
+    { symbol: 'PG', price: 169.37, change: 0.9 },
+    { symbol: 'SHW', price: 339.74, change: -0.0 },
+    { symbol: 'TRV', price: 393.24, change: 0.7 },
+    { symbol: 'UNH', price: 339.85, change: 2.8 },
+    { symbol: 'V', price: 401.87, change: -0.1 },
+    { symbol: 'VZ', price: 46.48, change: 1.6 },
+    { symbol: 'WMT', price: 127.95, change: 1.5 },
   ],
 
   // Ground segments: { x, width } - gaps between segments are pits
@@ -4799,36 +4802,36 @@ const LEVEL_2 = {
   checkpoints: [{ x: 4000 }, { x: 8600 }],
 
   tickerStocks: [
-    { symbol: 'AAPL', price: 232.47, change: 1.2 },
-    { symbol: 'MSFT', price: 415.30, change: 0.8 },
-    { symbol: 'AMGN', price: 313.55, change: -0.4 },
-    { symbol: 'AXP', price: 298.10, change: 1.5 },
-    { symbol: 'BA', price: 178.42, change: -1.1 },
-    { symbol: 'CAT', price: 362.80, change: 0.6 },
-    { symbol: 'CRM', price: 332.15, change: 1.9 },
-    { symbol: 'CSCO', price: 58.73, change: 0.3 },
-    { symbol: 'CVX', price: 155.60, change: -0.7 },
-    { symbol: 'DIS', price: 112.88, change: 2.1 },
-    { symbol: 'GS', price: 598.45, change: 0.9 },
-    { symbol: 'HD', price: 388.20, change: -0.3 },
-    { symbol: 'HON', price: 210.35, change: 0.4 },
-    { symbol: 'IBM', price: 228.90, change: 1.1 },
-    { symbol: 'JNJ', price: 152.44, change: -0.2 },
-    { symbol: 'JPM', price: 252.68, change: 1.3 },
-    { symbol: 'KO', price: 61.35, change: 0.5 },
-    { symbol: 'MCD', price: 295.80, change: -0.6 },
-    { symbol: 'MMM', price: 135.22, change: 2.4 },
-    { symbol: 'MRK', price: 99.15, change: -1.8 },
-    { symbol: 'NKE', price: 71.50, change: -2.3 },
-    { symbol: 'PG', price: 168.92, change: 0.7 },
-    { symbol: 'TRV', price: 258.40, change: 1.0 },
-    { symbol: 'UNH', price: 528.75, change: -0.5 },
-    { symbol: 'V', price: 318.60, change: 1.4 },
-    { symbol: 'VZ', price: 40.88, change: 0.2 },
-    { symbol: 'WBA', price: 10.25, change: -3.5 },
-    { symbol: 'WMT', price: 92.44, change: 0.8 },
-    { symbol: 'DOW', price: 42.30, change: -1.2 },
-    { symbol: 'INTC', price: 20.15, change: -2.8 },
+    { symbol: 'AAPL', price: 342.56, change: -1.9 },
+    { symbol: 'AMGN', price: 435.64, change: -0.1 },
+    { symbol: 'AMZN', price: 246.82, change: -4.1 },
+    { symbol: 'AXP', price: 301.70, change: -3.0 },
+    { symbol: 'BA', price: 155.89, change: -2.9 },
+    { symbol: 'CAT', price: 510.45, change: -5.0 },
+    { symbol: 'CRM', price: 180.62, change: -1.5 },
+    { symbol: 'CSCO', price: 90.64, change: -4.3 },
+    { symbol: 'CVX', price: 208.37, change: 0.9 },
+    { symbol: 'DIS', price: 117.98, change: -1.9 },
+    { symbol: 'GS', price: 790.69, change: -6.7 },
+    { symbol: 'HD', price: 339.04, change: 0.7 },
+    { symbol: 'HON', price: 212.64, change: -2.4 },
+    { symbol: 'IBM', price: 224.44, change: 0.2 },
+    { symbol: 'JNJ', price: 270.47, change: 1.2 },
+    { symbol: 'JPM', price: 310.53, change: -3.0 },
+    { symbol: 'KO', price: 96.99, change: 0.9 },
+    { symbol: 'MCD', price: 273.24, change: 0.3 },
+    { symbol: 'MMM', price: 177.99, change: -0.3 },
+    { symbol: 'MRK', price: 133.72, change: 0.7 },
+    { symbol: 'MSFT', price: 484.52, change: -2.8 },
+    { symbol: 'NKE', price: 32.92, change: -4.1 },
+    { symbol: 'NVDA', price: 125.53, change: -14.0 },
+    { symbol: 'PG', price: 169.37, change: 0.9 },
+    { symbol: 'SHW', price: 339.74, change: -0.0 },
+    { symbol: 'TRV', price: 393.24, change: 0.7 },
+    { symbol: 'UNH', price: 339.85, change: 2.8 },
+    { symbol: 'V', price: 401.87, change: -0.1 },
+    { symbol: 'VZ', price: 46.48, change: 1.6 },
+    { symbol: 'WMT', price: 127.95, change: 1.5 },
   ],
 
   // 10 ground segments with wider/more pits — total covering 12000px
@@ -5209,36 +5212,36 @@ const LEVEL_3 = {
   checkpoints: [{ x: 3600 }, { x: 7900 }, { x: 11400 }],
 
   tickerStocks: [
-    { symbol: 'AAPL', price: 232.47, change: 1.2 },
-    { symbol: 'MSFT', price: 415.30, change: 0.8 },
-    { symbol: 'AMGN', price: 313.55, change: -0.4 },
-    { symbol: 'AXP', price: 298.10, change: 1.5 },
-    { symbol: 'BA', price: 178.42, change: -1.1 },
-    { symbol: 'CAT', price: 362.80, change: 0.6 },
-    { symbol: 'CRM', price: 332.15, change: 1.9 },
-    { symbol: 'CSCO', price: 58.73, change: 0.3 },
-    { symbol: 'CVX', price: 155.60, change: -0.7 },
-    { symbol: 'DIS', price: 112.88, change: 2.1 },
-    { symbol: 'GS', price: 598.45, change: 0.9 },
-    { symbol: 'HD', price: 388.20, change: -0.3 },
-    { symbol: 'HON', price: 210.35, change: 0.4 },
-    { symbol: 'IBM', price: 228.90, change: 1.1 },
-    { symbol: 'JNJ', price: 152.44, change: -0.2 },
-    { symbol: 'JPM', price: 252.68, change: 1.3 },
-    { symbol: 'KO', price: 61.35, change: 0.5 },
-    { symbol: 'MCD', price: 295.80, change: -0.6 },
-    { symbol: 'MMM', price: 135.22, change: 2.4 },
-    { symbol: 'MRK', price: 99.15, change: -1.8 },
-    { symbol: 'NKE', price: 71.50, change: -2.3 },
-    { symbol: 'PG', price: 168.92, change: 0.7 },
-    { symbol: 'TRV', price: 258.40, change: 1.0 },
-    { symbol: 'UNH', price: 528.75, change: -0.5 },
-    { symbol: 'V', price: 318.60, change: 1.4 },
-    { symbol: 'VZ', price: 40.88, change: 0.2 },
-    { symbol: 'WBA', price: 10.25, change: -3.5 },
-    { symbol: 'WMT', price: 92.44, change: 0.8 },
-    { symbol: 'DOW', price: 42.30, change: -1.2 },
-    { symbol: 'INTC', price: 20.15, change: -2.8 },
+    { symbol: 'AAPL', price: 342.56, change: -1.9 },
+    { symbol: 'AMGN', price: 435.64, change: -0.1 },
+    { symbol: 'AMZN', price: 246.82, change: -4.1 },
+    { symbol: 'AXP', price: 301.70, change: -3.0 },
+    { symbol: 'BA', price: 155.89, change: -2.9 },
+    { symbol: 'CAT', price: 510.45, change: -5.0 },
+    { symbol: 'CRM', price: 180.62, change: -1.5 },
+    { symbol: 'CSCO', price: 90.64, change: -4.3 },
+    { symbol: 'CVX', price: 208.37, change: 0.9 },
+    { symbol: 'DIS', price: 117.98, change: -1.9 },
+    { symbol: 'GS', price: 790.69, change: -6.7 },
+    { symbol: 'HD', price: 339.04, change: 0.7 },
+    { symbol: 'HON', price: 212.64, change: -2.4 },
+    { symbol: 'IBM', price: 224.44, change: 0.2 },
+    { symbol: 'JNJ', price: 270.47, change: 1.2 },
+    { symbol: 'JPM', price: 310.53, change: -3.0 },
+    { symbol: 'KO', price: 96.99, change: 0.9 },
+    { symbol: 'MCD', price: 273.24, change: 0.3 },
+    { symbol: 'MMM', price: 177.99, change: -0.3 },
+    { symbol: 'MRK', price: 133.72, change: 0.7 },
+    { symbol: 'MSFT', price: 484.52, change: -2.8 },
+    { symbol: 'NKE', price: 32.92, change: -4.1 },
+    { symbol: 'NVDA', price: 125.53, change: -14.0 },
+    { symbol: 'PG', price: 169.37, change: 0.9 },
+    { symbol: 'SHW', price: 339.74, change: -0.0 },
+    { symbol: 'TRV', price: 393.24, change: 0.7 },
+    { symbol: 'UNH', price: 339.85, change: 2.8 },
+    { symbol: 'V', price: 401.87, change: -0.1 },
+    { symbol: 'VZ', price: 46.48, change: 1.6 },
+    { symbol: 'WMT', price: 127.95, change: 1.5 },
   ],
 
   // 12 ground segments with many pits — total covering 14400px
@@ -5702,7 +5705,7 @@ function loadLevel(levelData) {
     redCandleZones: levelData.redCandleZones || [],
     redCandleTimer: 0,
     goalPosition: { ...levelData.goalPosition },
-    tickerStocks: levelData.tickerStocks,
+    tickerStocks: withQuotes(levelData.tickerStocks),
     name: levelData.name,
     bossArena: levelData.bossArena || null,
     boss: null,
@@ -8783,7 +8786,11 @@ class World3D {
   syncPlayer(player, time, dt) {
     if (!player) { if (this.investor) this.investor.root.visible = false; return; }
     if (!this.investor || this.investor.type !== player.characterType) {
-      if (this.investor) { this.scene.remove(this.investor.root); this.investor.dispose(); }
+      if (this.investor) {
+        this.scene.remove(this.investor.root);
+        if (this.investor.aura) this.scene.remove(this.investor.aura.fx);
+        this.investor.dispose();
+      }
       this.investor = new Investor3D(player.characterType);
       this.scene.add(this.investor.root);
       this.facing = player.facingRight ? 1 : -1;
@@ -8919,10 +8926,20 @@ class World3D {
     const seen = new Set();
     const x0 = this.camX - 760, x1 = this.camX + 760;
     for (const c of level.collectibles) {
-      if (c.collected || (c.type !== 'bull' && c.type !== 'dividend')) continue;
+      if (c.collected || (c.type !== 'bull' && c.type !== 'dividend' && c.type !== 'runningDiamond')) continue;
       if (c.x < x0 || c.x > x1) continue;
       seen.add(c);
       let g = this.collectMeshes.get(c);
+      if (!g && c.type === 'runningDiamond') {
+        g = this.makeDiamondPickup();
+        this.root.add(g);
+        this.collectMeshes.set(c, g);
+      }
+      if (g && g.userData.kind === 'diamond') {
+        g.position.set(c.x + c.width / 2, -(c.y + c.height / 2), -6);
+        this.updateDiamondPickup(g, c, time);
+        continue;
+      }
       if (!g) {
         g = new T.Group();
         const spinner = new T.Group();
@@ -8964,6 +8981,367 @@ class World3D {
       if (seen.has(c)) continue;
       this.root.remove(g);
       this.collectMeshes.delete(c);
+    }
+  }
+
+  // ------------------------------------------------------------
+  //  Diamonds: brilliant-cut gem, collect burst, Diamond Hands aura
+  // ------------------------------------------------------------
+  // Faceted gem shader: flat facets from screen-space derivatives, rainbow
+  // "fire" that shifts with the view angle, and moving specular glints.
+  gemMaterial(opts) {
+    opts = opts || {};
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 1 }, uBright: { value: opts.bright || 1 } },
+      transparent: true,
+      vertexShader: `
+        varying vec3 vView;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vView = mv.xyz;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform float uTime, uAlpha, uBright;
+        varying vec3 vView;
+        vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
+        void main() {
+          vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));
+          vec3 v = normalize(-vView);
+          float ndv = abs(dot(n, v));
+          float fr = pow(1.0 - ndv, 2.0);
+          vec3 cell = floor(n * 8.0 + 0.5);
+          float facet = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          float facet2 = fract(sin(dot(cell, vec3(39.346, 11.135, 83.155))) * 24634.6345);
+          vec3 fire = hue(fract(facet2 * 3.0 + uTime * 0.15));
+          vec3 r = reflect(-v, n);
+          vec3 L1 = normalize(vec3(sin(uTime * 1.7), 0.9, cos(uTime * 1.3) + 0.6));
+          vec3 L2 = normalize(vec3(-0.6, cos(uTime * 1.1) * 0.5 + 0.4, 0.8));
+          float glint = pow(max(dot(r, L1), 0.0), 60.0) * 3.0 + pow(max(dot(r, L2), 0.0), 24.0) * 0.9;
+          // Contrasty facets from deep blue to white (scintillation), with
+          // only some facets throwing coloured fire
+          vec3 ice = mix(vec3(0.16, 0.36, 0.78), vec3(1.0), smoothstep(0.12, 0.8, facet));
+          float fireMask = smoothstep(0.66, 0.8, facet2);
+          vec3 col = ice * (0.6 + 0.5 * ndv) + fire * (fireMask * (0.55 + 0.6 * fr) + fr * 0.18) + vec3(glint);
+          gl_FragColor = vec4(col * uBright, uAlpha);
+        }`,
+    });
+    m.__persist = true;
+    (this.flameMats || (this.flameMats = [])).push(m);   // shares the uTime update
+    return m;
+  }
+
+  starTex() {
+    return this.canvasTex('sparkStar', 64, 64, (c, w, h) => {
+      const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.18, 'rgba(220,245,255,0.8)');
+      g.addColorStop(0.45, 'rgba(140,210,255,0.15)'); g.addColorStop(1, 'rgba(140,210,255,0)');
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#ffffff';
+      for (const [rw, rh] of [[30, 2.2], [2.2, 30]]) {     // four-point star rays
+        const lg = c.createRadialGradient(32, 32, 0, 32, 32, 30);
+        lg.addColorStop(0, 'rgba(255,255,255,1)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = lg;
+        c.beginPath(); c.ellipse(32, 32, rw, rh, 0, 0, Math.PI * 2); c.fill();
+      }
+    }, { repeat: false });
+  }
+
+  pillarTex() {
+    return this.canvasTex('lightPillar', 64, 256, (c, w, h) => {
+      const gx = c.createLinearGradient(0, 0, w, 0);
+      gx.addColorStop(0, 'rgba(255,255,255,0)'); gx.addColorStop(0.5, 'rgba(255,255,255,1)'); gx.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gx; c.fillRect(0, 0, w, h);
+      c.globalCompositeOperation = 'destination-in';
+      const gy = c.createLinearGradient(0, 0, 0, h);
+      gy.addColorStop(0, 'rgba(0,0,0,0)'); gy.addColorStop(0.55, 'rgba(0,0,0,0.9)'); gy.addColorStop(1, 'rgba(0,0,0,0.4)');
+      c.fillStyle = gy; c.fillRect(0, 0, w, h);
+    }, { repeat: false });
+  }
+
+  diamondAssets() {
+    if (this.gemAssets) return this.gemAssets;
+    const T = THREE;
+    // Round brilliant profile (radius, height): culet -> pavilion -> girdle -> crown -> table
+    const prof = [[0, -10], [6.2, -5.6], [11.5, -0.6], [11.5, 0.6], [9.6, 2.6], [5.8, 5.4], [0, 5.4]]
+      .map(([r, y]) => new T.Vector2(r, y));
+    const gemGeo = new T.LatheGeometry(prof, 10).toNonIndexed();
+    gemGeo.computeVertexNormals();
+    const ringGeo = new T.RingGeometry(0.82, 1, 64);
+    const thinRing = new T.RingGeometry(0.94, 1, 96);
+    const additive = (color, opacity) => new T.MeshBasicMaterial({ color, transparent: true, opacity,
+      blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, toneMapped: false });
+    this.gemAssets = {
+      gemGeo, ringGeo, thinRing, additive,
+      gem: this.gemMaterial(),
+      shardGem: this.gemMaterial({ bright: 1.3 }),
+      handGem: this.gemMaterial({ bright: 1.15 }),
+    };
+    return this.gemAssets;
+  }
+
+  sparkle(color, size, opacity) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.starTex(), color: new THREE.Color(color || '#ffffff'), transparent: true,
+      opacity: opacity === undefined ? 1 : opacity, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    s.scale.set(size, size, 1);
+    return s;
+  }
+
+  // Bouncing diamond pickup: spinning brilliant with halo and twinkling stars
+  makeDiamondPickup() {
+    const T = THREE, A = this.diamondAssets();
+    const g = new T.Group();
+    const spinner = new T.Group();
+    const gem = new T.Mesh(A.gemGeo, A.gem);
+    gem.scale.setScalar(1.15);
+    gem.rotation.x = 0.32;            // tip the table toward the camera
+    spinner.add(gem);
+    g.add(spinner);
+    const halo = this.glow('#7fd8ff', 110, 0.55);
+    halo.position.z = -8;
+    const core = this.glow('#ffffff', 46, 0.5);
+    core.position.z = 6;
+    g.add(halo, core);
+    const stars = [];
+    for (let i = 0; i < 4; i++) {
+      const st = this.sparkle('#e8f8ff', 22);
+      st.position.z = 8;
+      g.add(st);
+      stars.push(st);
+    }
+    g.userData = { spinner, halo, stars, kind: 'diamond' };
+    return g;
+  }
+
+  updateDiamondPickup(g, c, time) {
+    const u = g.userData;
+    u.spinner.rotation.y = time * 2.8;
+    u.spinner.rotation.z = Math.sin(time * 2.1) * 0.25;
+    u.halo.material.opacity = 0.45 + Math.sin(time * 7) * 0.15;
+    u.stars.forEach((st, i) => {
+      const a = time * 1.3 + i * Math.PI / 2;
+      const tw = Math.max(0, Math.sin(time * 5.5 + i * 1.9));
+      st.position.x = Math.cos(a) * 19;
+      st.position.y = Math.sin(a) * 15;
+      st.scale.setScalar(5 + tw * 17);
+      st.material.opacity = tw;
+    });
+    // Blink as it is about to vanish
+    g.visible = c.lifetime > 2.5 || Math.floor(c.lifetime * 8) % 2 === 0;
+    // Shed a trail of sparkles while it bounces around
+    if (Math.random() < 0.45) this.spawnSpark(c.x + c.width / 2 + (Math.random() - 0.5) * 16,
+      c.y + c.height / 2 + (Math.random() - 0.5) * 16, 0, -20, 0.6, 10 + Math.random() * 10);
+  }
+
+  // ---- transient effects (sparks, shards, rings), reset on each level build ----
+  addFx(obj, life, update) {
+    if (!this.root) return;
+    this.root.add(obj);
+    (this.fx || (this.fx = [])).push({ obj, life, t: 0, update });
+  }
+
+  updateFx(dt) {
+    if (!this.fx || !this.fx.length) return;
+    const keep = [];
+    for (const f of this.fx) {
+      f.t += dt;
+      if (f.t >= f.life) {
+        if (f.obj.parent) f.obj.parent.remove(f.obj);
+        const ms = f.obj.material ? [f.obj.material] : [];
+        f.obj.traverse(o => { if (o !== f.obj && o.material) ms.push(o.material); });
+        for (const m of ms) if (!m.__persist && !m.__shared) m.dispose();
+        continue;
+      }
+      f.update(f.obj, f.t / f.life, dt, f);
+      keep.push(f);
+    }
+    this.fx = keep;
+  }
+
+  // One rising, fading star sparkle at a game-space point
+  spawnSpark(x, y, vx, vy, life, size, color) {
+    if (this.fx && this.fx.length > 400) return;
+    const st = this.sparkle(color || (Math.random() < 0.3 ? '#ffe9a8' : '#cfefff'), size);
+    st.position.set(x, -y, -14 + Math.random() * 24);
+    const spin = (Math.random() - 0.5) * 6;
+    this.addFx(st, life, (o, k, dt) => {
+      o.position.x += vx * dt; o.position.y -= vy * dt;
+      o.material.rotation += spin * dt;
+      const tw = Math.sin(k * Math.PI);
+      o.scale.setScalar(size * (0.4 + tw));
+      o.material.opacity = tw;
+    });
+  }
+
+  // Big moment when a diamond (or the 100th bull) triggers Diamond Hands
+  diamondBurst(x, y) {
+    const T = THREE, A = this.diamondAssets();
+    const X = x, Y = -y;
+    // Flash
+    const flash = this.glow('#dff6ff', 520, 1);
+    flash.position.set(X, Y, 20);
+    this.addFx(flash, 0.45, (o, k) => { o.material.opacity = (1 - k) * (1 - k); o.scale.setScalar(380 + k * 420); });
+    // Shockwave rings (cyan, then white)
+    [['#66ccff', 0, 0.75], ['#ffffff', 0.08, 0.6], ['#c9a2ff', 0.16, 0.7]].forEach(([col, delay, life]) => {
+      const ring = new T.Mesh(A.thinRing, A.additive(col, 0.7));
+      ring.position.set(X, Y, 10);
+      ring.scale.setScalar(1);
+      this.addFx(ring, life + delay, (o, k, dt, f) => {
+        const t = Math.max(0, f.t - delay) / life;
+        o.visible = f.t >= delay;
+        const e = 1 - Math.pow(1 - t, 3);
+        o.scale.setScalar(10 + e * 190);
+        o.material.opacity = 0.7 * (1 - t) * (1 - t);
+      });
+    });
+    // Ground ring spreading flat across the floor
+    const groundRing = new T.Mesh(A.ringGeo, A.additive('#88ddff', 0.8));
+    groundRing.rotation.x = -Math.PI / 2;
+    groundRing.position.set(X, Y - 18, 0);
+    this.addFx(groundRing, 0.9, (o, k) => { o.scale.setScalar(20 + k * 260); o.material.opacity = 0.8 * (1 - k); });
+    // Pillar of light
+    const pillarMat = new T.MeshBasicMaterial({ map: this.pillarTex(), color: 0x9fe4ff, transparent: true, opacity: 0,
+      blending: T.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const pillar = new T.Mesh(new T.PlaneGeometry(90, 900), pillarMat);
+    pillar.position.set(X, Y + 420, -4);
+    this.addFx(pillar, 1.1, (o, k) => {
+      o.material.opacity = k < 0.12 ? k / 0.12 : (1 - k) / 0.88;
+      o.scale.x = 1 + k * 0.8;
+    });
+    // Diamond shards flying out
+    for (let i = 0; i < 22; i++) {
+      const shard = new T.Mesh(A.gemGeo, A.shardGem);
+      const sc = 0.18 + Math.random() * 0.28;
+      shard.scale.setScalar(sc);
+      shard.position.set(X, Y, 8);
+      const a = (i / 22) * Math.PI * 2 + Math.random() * 0.3;
+      const sp = 240 + Math.random() * 260;
+      const v = new T.Vector3(Math.cos(a) * sp, Math.sin(a) * sp + 160, (Math.random() - 0.3) * 200);
+      const rv = new T.Vector3(Math.random() * 12 - 6, Math.random() * 12 - 6, Math.random() * 12 - 6);
+      this.addFx(shard, 1.0 + Math.random() * 0.5, (o, k, dt) => {
+        v.y -= 900 * dt; v.multiplyScalar(1 - dt * 0.8);
+        o.position.addScaledVector(v, dt);
+        o.rotation.x += rv.x * dt; o.rotation.y += rv.y * dt; o.rotation.z += rv.z * dt;
+        o.scale.setScalar(sc * (k < 0.7 ? 1 : (1 - k) / 0.3));
+      });
+    }
+    // Star sparkles
+    for (let i = 0; i < 26; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 80 + Math.random() * 280;
+      this.spawnSpark(x, y, Math.cos(a) * sp, Math.sin(a) * sp - 60, 0.6 + Math.random() * 0.7, 16 + Math.random() * 26,
+        ['#ffffff', '#bfe9ff', '#ffe7a0', '#e0c8ff'][i % 4]);
+    }
+  }
+
+  // Diamond Hands power-up on the 3D investor: crystal hands, an iridescent
+  // shell over the whole body, orbiting gems, a floor ring and a sparkle trail.
+  syncDiamondAura(player, time, dt) {
+    const inv = this.investor;
+    if (!inv) return;
+    const T = THREE, A = this.diamondAssets();
+    const on = !!(player && player.diamondHands && !player.deathAnimating);
+    if (!inv.aura && !on) return;
+    if (!inv.aura) {
+      const shellMat = new T.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uAlpha: { value: 1 }, uPush: { value: 0.9 } },
+        transparent: true, blending: T.AdditiveBlending, depthWrite: false,
+        vertexShader: `
+          uniform float uPush;
+          varying vec3 vN; varying vec3 vV;
+          void main() {
+            vec4 mv = modelViewMatrix * vec4(position + normal * uPush, 1.0);
+            vV = -mv.xyz;
+            vN = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform float uTime, uAlpha;
+          varying vec3 vN; varying vec3 vV;
+          vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
+          void main() {
+            float fr = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.4);
+            float band = 0.5 + 0.5 * sin(vV.y * 0.25 - uTime * 9.0);
+            vec3 c = mix(vec3(0.55, 0.9, 1.0), hue(fract(vV.y * 0.012 + uTime * 0.5)), 0.6);
+            gl_FragColor = vec4(c * (fr * 1.15 + band * 0.07), 1.0) * uAlpha;
+          }`,
+      });
+      const shells = [];
+      const meshes = [];
+      inv.root.traverse(o => {
+        if (!o.isMesh) return;
+        // Skip tiny parts (eyes, buttons) so the face stays readable
+        if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+        if (o.geometry.boundingSphere.radius < 2.6 && !inv.arms.some(a => a.hand === o)) return;
+        meshes.push(o);
+      });
+      for (const m of meshes) {
+        const sh = new T.Mesh(m.geometry, shellMat);
+        sh.castShadow = false;
+        sh.renderOrder = 2;
+        m.add(sh);
+        shells.push(sh);
+      }
+      const fx = new T.Group();
+      const back = this.glow('#79d4ff', 200, 0.45);
+      back.position.set(0, 24, -14);
+      fx.add(back);
+      const floorRing = new T.Mesh(A.ringGeo, A.additive('#7fd8ff', 0.7));
+      floorRing.rotation.x = -Math.PI / 2;
+      const floorRing2 = new T.Mesh(A.ringGeo, A.additive('#ffffff', 0.5));
+      floorRing2.rotation.x = -Math.PI / 2;
+      fx.add(floorRing, floorRing2);
+      const orbit = [];
+      for (let i = 0; i < 3; i++) {
+        const og = new T.Group();
+        const gem = new T.Mesh(A.gemGeo, A.gem);
+        gem.scale.setScalar(0.55);
+        const gl = this.glow('#9fe4ff', 38, 0.6);
+        og.add(gem, gl);
+        fx.add(og);
+        orbit.push({ og, gem });
+      }
+      this.scene.add(fx);
+      inv.aura = { shellMat, shells, fx, back, floorRing, floorRing2, orbit, sparkT: 0 };
+    }
+    const au = inv.aura;
+    // Hands turn to diamond
+    for (const a of inv.arms) {
+      if (on && a.hand.material !== A.handGem) { a.hand.userData.skin = a.hand.material; a.hand.material = A.handGem; a.hand.scale.set(1.25, 1.35, 1.2); }
+      else if (!on && a.hand.material === A.handGem) { a.hand.material = a.hand.userData.skin; a.hand.scale.set(0.95, 1.1, 0.9); }
+    }
+    // Blink faster as the power runs out
+    const left = player ? player.invincibleTimer : 0;
+    const blink = left < 3 ? Math.floor(time * (left < 1.5 ? 16 : 8)) % 2 === 0 : true;
+    const vis = on && blink && inv.root.visible;
+    for (const sh of au.shells) sh.visible = vis;
+    au.fx.visible = on && inv.root.visible;
+    if (!on) return;
+    au.shellMat.uniforms.uTime.value = time;
+    au.shellMat.uniforms.uAlpha.value = blink ? 1 : 0.25;
+    const px = player.x + player.width / 2, feet = -(player.y + player.height), mid = feet + player.height * 0.55;
+    au.back.position.set(px, mid, -16);
+    au.back.material.opacity = 0.38 + Math.sin(time * 6) * 0.1;
+    const pulse = (time * 1.4) % 1;
+    au.floorRing.position.set(px, feet + 1, -8);
+    au.floorRing.scale.setScalar(26 + Math.sin(time * 5) * 2);
+    au.floorRing2.position.set(px, feet + 1.5, -8);
+    au.floorRing2.scale.setScalar(14 + pulse * 40);
+    au.floorRing2.material.opacity = 0.6 * (1 - pulse);
+    au.floorRing.visible = au.floorRing2.visible = player.onGround;
+    au.orbit.forEach((o, i) => {
+      const a = time * 3.2 + i * (Math.PI * 2 / 3);
+      o.og.position.set(px + Math.cos(a) * 30, mid + Math.sin(a * 2) * 5 + Math.sin(a) * 9, -8 + Math.sin(a) * 26);
+      o.gem.rotation.y = time * 5 + i;
+      o.og.visible = blink;
+    });
+    // Sparkle trail
+    au.sparkT += dt * (Math.abs(player.vx) > 40 ? 34 : 16);
+    while (au.sparkT > 1) {
+      au.sparkT -= 1;
+      this.spawnSpark(px + (Math.random() - 0.5) * player.width * 1.4, player.y + Math.random() * player.height,
+        -player.vx * 0.15, -30 - Math.random() * 40, 0.5 + Math.random() * 0.4, 8 + Math.random() * 12);
     }
   }
 
@@ -9024,6 +9402,8 @@ class World3D {
     if (this.flameMats) for (const m of this.flameMats) m.uniforms.uTime.value = time;
     this.syncPlayer(player, time, dt);
     this.syncCollectibles(level, time);
+    this.syncDiamondAura(player, time, dt);
+    this.updateFx(dt);
 
     this.renderer.render(this.scene, this.cam);
   }
@@ -9273,6 +9653,7 @@ class World3D {
     this.merged = new Map();
     this.flameMats = this.flameMats ? this.flameMats.filter(m => m.__persist) : [];
     this.collectMeshes = new Map();
+    this.fx = [];
 
     const name = W3D_THEMES[themeName] ? themeName : 'nightCity';
     const th = W3D_THEMES[name];
@@ -10262,7 +10643,12 @@ class World3D {
     const screenTex = this.canvasTex(null, 2048, 128, (c, w, h) => {
       c.fillStyle = '#120a08'; c.fillRect(0, 0, w, h);
       c.font = 'bold 72px sans-serif'; c.textBaseline = 'middle';
-      const parts = [['ANT', '#ffffff'], [' ▲ $111.50 ', '#00FF88'], ['+34%', '#00FF88'], ['   ·   ', '#d97757'],
+      // Live ANT quote from the level ticker (falls back to its built-in close)
+      const ant = (level.tickerStocks || []).find(s => s.symbol === 'ANT') || { price: 88.91, change: -8.5 };
+      const up = ant.change >= 0, qc = up ? '#00FF88' : '#FF5555';
+      const parts = [['ANT', '#ffffff'], [(up ? ' ▲ $' : ' ▼ $') + ant.price.toFixed(2) + ' ', qc],
+        [(up ? '+' : '') + ant.change.toFixed(1) + '%', qc], ['   ·   ', '#d97757'],
+        ['OPENED $111.50', '#FFE0B0'], ['   ·   ', '#d97757'],
         ['IPO PRICED $83', '#FFE0B0'], ['   ·   ', '#d97757'], ['LARGEST IPO ON RECORD', '#FFC890'], ['   ·   ', '#d97757']];
       let x = 20;
       while (x < w) for (const [txt, col] of parts) { c.fillStyle = col; c.fillText(txt, x, h / 2 + 4); x += c.measureText(txt).width; }
@@ -11492,6 +11878,13 @@ let levelItemsCollected = 0;
 let demoMode = false, titleIdleTime = 0, demoEndTimer = 0;
 const PERFECT_BONUS = 5000;
 
+// Diamond Hands kicks in: 3D burst (shards, shockwaves, light pillar) + screen flash
+let diamondFlashTimer = 0;
+function diamondFx(x, y) {
+  diamondFlashTimer = 0.5;
+  if (world3d && world3d.active) world3d.diamondBurst(x, y);
+}
+
 function beginLevelTracking() {
   levelStartItems = new Set(level.collectibles.filter(c => c.type === 'bull' || c.type === 'dividend'));
   levelItemsCollected = 0;
@@ -11575,13 +11968,8 @@ function startGame(characterType, levelIndex) {
   currentState = GameState.PLAYING;
   beginLevelTracking();
 
-  // Try to fetch live stock data
-  fetchLiveStockData().then(stocks => {
-    if (stocks) {
-      level.tickerStocks = stocks;
-      hud.tickerStocks = stocks;
-    }
-  });
+  // Refresh live quotes (the level already started with the latest ones we had)
+  fetchLiveStockData().then(ok => { if (ok) applyLiveQuotes(false); });
 }
 
 function spawnFromBlock(contents, x, y) {
@@ -11740,25 +12128,13 @@ function updatePlaying(dt) {
   if (flashCrashTimer > 0) {
     flashCrashTimer -= dt;
   }
+  if (diamondFlashTimer > 0) diamondFlashTimer -= dt;
 
   // Periodic stock ticker refresh
   lastStockFetchTime += dt;
   if (lastStockFetchTime >= STOCK_FETCH_INTERVAL) {
     lastStockFetchTime = 0;
-    fetchLiveStockData().then(stocks => {
-      if (stocks && level && hud) {
-        const oldStocks = level.tickerStocks;
-        for (const newStock of stocks) {
-          const old = oldStocks.find(s => s.symbol === newStock.symbol);
-          if (old && old.price !== newStock.price) {
-            newStock._flash = newStock.price > old.price ? 'green' : 'red';
-            newStock._flashTimer = 2.0;
-          }
-        }
-        level.tickerStocks = stocks;
-        hud.tickerStocks = stocks;
-      }
-    });
+    fetchLiveStockData().then(ok => { if (ok) applyLiveQuotes(true); });
   }
 
   // Update player
@@ -11925,6 +12301,7 @@ function updatePlaying(dt) {
         floatingText.spawn(player.x + player.width / 2, player.y - 40,
           'DIAMOND HANDS!', '#88DDFF', 28, 2.5);
         particles.powerUp(player.x + player.width / 2, player.y + player.height / 2, '#88DDFF');
+        diamondFx(player.x + player.width / 2, player.y + player.height / 2);
       }
     } else if (c.type === 'hodlItem') {
       player.applyPowerUp('hodlItem');
@@ -11946,6 +12323,7 @@ function updatePlaying(dt) {
       audio.playDiamondHands();
       player.activateDiamondHands();
       particles.powerUp(player.x + player.width / 2, player.y + player.height / 2, '#88DDFF');
+      diamondFx(c.x + c.width / 2, c.y + c.height / 2);
       floatingText.spawn(player.x + player.width / 2, player.y - 40,
         'DIAMOND HANDS!', '#88DDFF', 28, 2.5);
     }
@@ -12644,6 +13022,17 @@ function renderPlaying() {
   particles.render(ctx, camera);
   floatingText.render(ctx, camera);
 
+  // Diamond Hands activation flash
+  if (diamondFlashTimer > 0) {
+    const k = diamondFlashTimer / 0.5;
+    const g = ctx.createRadialGradient(CONFIG.VIRTUAL_WIDTH / 2, CONFIG.VIRTUAL_HEIGHT / 2, 60,
+      CONFIG.VIRTUAL_WIDTH / 2, CONFIG.VIRTUAL_HEIGHT / 2, CONFIG.VIRTUAL_WIDTH * 0.7);
+    g.addColorStop(0, 'rgba(235,250,255,' + (0.55 * k * k) + ')');
+    g.addColorStop(1, 'rgba(120,200,255,' + (0.35 * k) + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, CONFIG.VIRTUAL_WIDTH, CONFIG.VIRTUAL_HEIGHT);
+  }
+
   // Flash Crash death effect
   if (flashCrashTimer > 0) {
     ctx.globalAlpha = Math.min(flashCrashTimer * 2, 0.5);
@@ -12746,104 +13135,93 @@ function renderDebug() {
 }
 
 // ==========================================
-//  Live Stock Ticker (Dow 30)
+//  Live Stock Ticker
 // ==========================================
-// Symbols shown in the live ticker. SPCX (SpaceX) is included so it goes
-// live automatically once the feeds list it; until then it's pinned below.
-const TICKER_SYMBOLS = ['ANT','SPCX','AAPL','MSFT','NVDA','TSLA','AMZN','GOOGL','META',
-  'JPM','V','DIS','BA','KO','GS','NFLX','AMD'];
+// Quotes come from quotes.json, which a GitHub Action (.github/workflows/quotes.yml)
+// refreshes every 15 minutes during market hours and publishes to the repo's
+// `quotes` branch. raw.githubusercontent.com serves it with CORS headers, so the
+// browser can read it directly — no flaky public proxies needed. Each level keeps
+// its own symbol list; live prices are merged into it by symbol.
+const QUOTES_URL = 'https://raw.githubusercontent.com/tmartin0627-ship-it/bull-run-game/quotes/quotes.json';
+const QUOTE_SYMBOLS = ['ANT','SPCX','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','AMD','AVGO',
+  'TSM','MU','JPM','GS','V','BA','DIS','KO','NFLX'];
+let liveQuotes = null;      // { SYMBOL: { price, change } }
+let liveQuotesUpdated = null;
 
-// SpaceX listed on Nasdaq 2026-06-12: closed $160.95, +19% on debut. Used as a
-// pin (feeds may lag a brand-new symbol) and as the hardcoded last resort.
-const SPCX_FALLBACK = { symbol: 'SPCX', price: 160.95, change: 19.2 };
-// Anthropic listed on Nasdaq 2026-11-19 as ANT: priced $83, opened $111.50 (+34%).
-const ANT_FALLBACK = { symbol: 'ANT', price: 111.50, change: 34.3 };
+// Return a copy of a level's ticker list with live prices merged in. With
+// `flash`, symbols whose price moved get a brief green/red highlight.
+function withQuotes(stocks, flash) {
+  if (!stocks) return stocks;
+  if (!liveQuotes) return stocks;
+  return stocks.map(s => {
+    const q = liveQuotes[s.symbol];
+    if (!q) return s;
+    const out = { symbol: s.symbol, price: q.price, change: q.change };
+    if (flash && q.price !== s.price) { out._flash = q.price > s.price ? 'green' : 'red'; out._flashTimer = 2.0; }
+    return out;
+  });
+}
 
-// Public CORS relays, tried in order. Free stock endpoints don't send CORS
-// headers, so the browser needs a proxy; redundancy is what buys reliability.
+async function fetchFromRepo() {
+  // Minute-level cache buster: raw.githubusercontent caches for ~5 minutes anyway
+  const resp = await fetch(QUOTES_URL + '?t=' + Math.floor(Date.now() / 60000),
+    { signal: AbortSignal.timeout(6000) });
+  if (!resp.ok) throw new Error('quotes.json HTTP ' + resp.status);
+  const data = await resp.json();
+  if (!data.quotes || Object.keys(data.quotes).length < 10) throw new Error('quotes.json incomplete');
+  liveQuotesUpdated = data.updated;
+  return data.quotes;
+}
+
+// Backup: Yahoo's batch spark endpoint through public CORS relays (one request).
 const CORS_PROXIES = [
-  u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
   u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-  u => 'https://thingproxy.freeboard.io/fetch/' + u,
+  u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
 ];
-
-async function proxiedFetch(url, timeoutMs = 6000) {
+async function fetchFromYahoo() {
+  const url = 'https://query1.finance.yahoo.com/v7/finance/spark?symbols=' +
+    QUOTE_SYMBOLS.join(',') + '&range=5d&interval=1d';
   for (const wrap of CORS_PROXIES) {
     try {
-      const resp = await fetch(wrap(url), { signal: AbortSignal.timeout(timeoutMs) });
-      if (resp.ok) {
-        const text = await resp.text();
-        if (text && text.length > 2) return text;
+      const resp = await fetch(wrap(url), { signal: AbortSignal.timeout(7000) });
+      if (!resp.ok) continue;
+      const out = {};
+      for (const r of (await resp.json()).spark.result || []) {
+        const meta = r.response && r.response[0] && r.response[0].meta;
+        if (!meta || !(meta.regularMarketPrice > 0)) continue;
+        out[r.symbol] = {
+          price: Math.round(meta.regularMarketPrice * 100) / 100,
+          change: Math.round((meta.regularMarketChangePercent || 0) * 100) / 100,
+        };
       }
-    } catch (e) { /* try the next proxy */ }
+      if (Object.keys(out).length >= 10) return out;
+    } catch (e) { /* try the next relay */ }
   }
-  throw new Error('all proxies failed for ' + url);
+  throw new Error('all relays failed');
 }
 
-function cleanQuote(symbol, price, change) {
-  return {
-    symbol,
-    price: Math.round(price * 100) / 100,
-    change: Math.round((change || 0) * 100) / 100,
-  };
-}
-
-// Source 1 — Yahoo v8 chart (no auth/crumb needed, unlike the old v7 quote).
-// One symbol per request, fired in parallel; gives price AND previous close,
-// so the % change is accurate. Partial success is fine.
-async function fetchFromYahoo(symbols) {
-  const settled = await Promise.allSettled(symbols.map(async sym => {
-    const text = await proxiedFetch(
-      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?interval=1d&range=2d');
-    const meta = JSON.parse(text).chart.result[0].meta;
-    const price = meta.regularMarketPrice;
-    const prev = meta.chartPreviousClose ?? meta.previousClose;
-    if (!isFinite(price) || price <= 0) throw new Error('no price for ' + sym);
-    return cleanQuote(sym, price, prev ? ((price - prev) / prev) * 100 : 0);
-  }));
-  return settled.filter(r => r.status === 'fulfilled').map(r => r.value);
-}
-
-// Source 2 — Stooq batch CSV (free, no key, all symbols in one request).
-// Change here is intraday (close vs open) since the light feed omits prev close.
-async function fetchFromStooq(symbols) {
-  const list = symbols.map(s => s.toLowerCase() + '.us').join('+');
-  const text = await proxiedFetch(
-    'https://stooq.com/q/l/?s=' + list + '&f=sd2t2ohlcv&h&e=csv');
-  const out = [];
-  for (const line of text.trim().split('\n').slice(1)) {
-    const [sym, , , open, , , close] = line.split(',');
-    const price = parseFloat(close), o = parseFloat(open);
-    if (!sym || !isFinite(price) || price <= 0) continue;
-    out.push(cleanQuote(sym.replace(/\.us$/i, '').toUpperCase(), price, o ? ((price - o) / o) * 100 : 0));
-  }
-  return out;
-}
-
+// Refresh liveQuotes. Returns true when fresh quotes arrived.
 async function fetchLiveStockData() {
-  const need = Math.ceil(TICKER_SYMBOLS.length / 2); // accept partial coverage
-  for (const source of [fetchFromYahoo, fetchFromStooq]) {
+  for (const source of [fetchFromRepo, fetchFromYahoo]) {
     try {
-      const quotes = await source(TICKER_SYMBOLS);
-      if (quotes.length >= need) {
-        if (!quotes.some(q => q.symbol === 'SPCX')) quotes.unshift({ ...SPCX_FALLBACK });
-        if (!quotes.some(q => q.symbol === 'ANT')) quotes.unshift({ ...ANT_FALLBACK });
-        return quotes;
-      }
+      liveQuotes = await source();
+      return true;
     } catch (e) {
       console.warn('Live ticker source failed:', e.message);
     }
   }
-  return null; // every source failed — fall back to the level's hardcoded list
+  return false; // keep the level's built-in (recent, real) prices
+}
+
+// Push the latest quotes into the running level's ticker
+function applyLiveQuotes(flash) {
+  if (!liveQuotes || !level) return;
+  level.tickerStocks = withQuotes(level.tickerStocks, flash);
+  if (hud) hud.tickerStocks = level.tickerStocks;
 }
 
 // Try to load live data on page load
-fetchLiveStockData().then(stocks => {
-  if (stocks && level) {
-    level.tickerStocks = stocks;
-    if (hud) hud.tickerStocks = stocks;
-  }
-});
+fetchLiveStockData().then(ok => { if (ok) applyLiveQuotes(false); });
 
 // ==========================================
 //  Game Loop
